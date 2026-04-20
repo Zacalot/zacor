@@ -1,0 +1,59 @@
+name: kv
+version: "0.1.0"
+binary: kv
+description: "Key-value store"
+protocol: true
+project-data: true
+build:
+  command: "cargo build --release --bin kv"
+  output: ../../target/release
+commands:
+  set:
+    description: "Store a key-value pair"
+    args:
+      key:
+        type: string
+        required: true
+      value:
+        type: string
+        required: true
+    output:
+      type: record
+      schema:
+        key: string
+        value: string
+  get:
+    description: "Retrieve a value by key"
+    args:
+      key:
+        type: string
+        required: true
+    output:
+      type: record
+      schema:
+        key: string
+        value: string
+  list:
+    description: "List all key-value pairs"
+    output:
+      type: table
+      schema:
+        key: string
+        value: string
+  delete:
+    description: "Remove a key-value pair"
+    args:
+      key:
+        type: string
+        required: true
+    output:
+      type: record
+      schema:
+        key: string
+        value: string
+execution:
+  default: command
+service:
+  start: "kv --listen=:{port}"
+  port: 9200
+  health: /health

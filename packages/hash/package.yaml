@@ -1,0 +1,24 @@
+name: hash
+version: "0.1.0"
+binary: hash
+description: "File and stdin hasher"
+protocol: true
+build:
+  command: "cargo build --release --bin hash"
+  output: ../../target/release
+commands:
+  default:
+    description: "Compute cryptographic hash of files or stdin"
+    args:
+      file:
+        type: path
+      algorithm:
+        type: string
+        default: "sha256"
+    input: text
+    output:
+      type: table
+      schema:
+        hash: string
+        algorithm: string
+        file: string

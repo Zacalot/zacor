@@ -1,0 +1,21 @@
+[package]
+name = "zr-reshape"
+version = "0.1.0"
+edition = "2024"
+description = "Structural record transformations (rename, flatten, transpose, wrap, group-by, enumerate, columns, values)"
+
+[lib]
+name = "zr_reshape"
+path = "src/lib.rs"
+
+[[bin]]
+name = "reshape"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

@@ -1,0 +1,27 @@
+[package]
+name = "zr-hash"
+version = "0.1.0"
+edition = "2024"
+description = "File and stdin hasher"
+
+[lib]
+name = "zr_hash"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hash"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+md-5 = "0.10"
+sha1 = "0.10"
+
+[build-dependencies]
+zacor-package-build.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,70 @@
+name: web
+version: "0.1.0"
+binary: web
+description: "Unified web search and fetch tools"
+protocol: true
+build:
+  command: "cargo build --release --bin web"
+  output: ../../target/release
+commands:
+  search:
+    description: "Search the web"
+    args:
+      query:
+        type: string
+        required: true
+        rest: true
+      engine:
+        type: string
+        flag: engine
+        default: "duckduckgo"
+      fallback:
+        type: string
+        flag: fallback
+      count:
+        type: integer
+        flag: count
+        default: 10
+      page:
+        type: integer
+        flag: page
+        default: 1
+      timeout:
+        type: integer
+        flag: timeout
+        default: 30
+      news:
+        type: bool
+        flag: news
+    output:
+      type: table
+      schema:
+        engine: string
+        rank: integer
+        title: string
+        url: url
+        snippet: string
+  fetch:
+    description: "Fetch a URL and output the response"
+    args:
+      url:
+        type: string
+        required: true
+      timeout:
+        type: integer
+        flag: timeout
+        default: 30
+      user-agent:
+        type: string
+        flag: user-agent
+        default: "zr-web/0.1"
+    output:
+      type: record
+      schema:
+        url: url
+        status: number
+        elapsed: duration
+        body: string
+        content_type: string
+  extract:
+    description: "Reserved for future readable-content extraction"

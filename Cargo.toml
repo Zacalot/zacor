@@ -1,0 +1,53 @@
+[workspace]
+members = [
+    "crates/zacor",
+    "crates/zacor-package",
+    "crates/zacor-package-build",
+    "crates/zr-client",
+    "crates/zr-expr",
+
+    "packages/echo",
+    "packages/cat",
+    "packages/wc",
+    "packages/ls",
+    "packages/select",
+    "packages/date",
+    "packages/rand",
+    "packages/word",
+    "packages/web",
+    "packages/where",
+    "packages/first",
+    "packages/last",
+    "packages/sort",
+    "packages/filter",
+    "packages/reshape",
+    "packages/mutate",
+    "packages/math",
+    "packages/str",
+    "packages/combine",
+    "packages/calc",
+    "packages/head",
+
+    "packages/watch",
+    "packages/kv",
+    "packages/hash",
+    "packages/json",
+
+    "packages/tree",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Zacalot/zacor"
+
+[workspace.dependencies]
+zacor-package = { version = "0.1", path = "crates/zacor-package" }
+zacor-package-build = { version = "0.1", path = "crates/zacor-package-build" }
+zr-expr = { version = "0.1", path = "crates/zr-expr" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = "symbols"

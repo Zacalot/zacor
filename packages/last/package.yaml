@@ -1,0 +1,18 @@
+name: last
+version: "0.1.0"
+binary: last
+description: "Take last N records from stream"
+protocol: true
+build:
+  command: "cargo build --release --bin last"
+  output: ../../target/release
+commands:
+  default:
+    description: "Take last N records from stream"
+    args:
+      count:
+        type: integer
+        default: 1
+    input: jsonl
+    output:
+      type: table

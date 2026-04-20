@@ -1,0 +1,25 @@
+name: watch
+version: "0.1.0"
+binary: watch
+description: "File system watcher"
+protocol: true
+build:
+  command: "cargo build --release --bin watch"
+  output: ../../target/release
+commands:
+  default:
+    description: "Watch file system for changes"
+    args:
+      path:
+        type: path
+        default: "."
+      no-recursive:
+        type: bool
+        flag: R
+    output:
+      type: table
+      stream: true
+      schema:
+        event: string
+        path: string
+        time: datetime

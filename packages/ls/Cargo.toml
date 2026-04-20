@@ -1,0 +1,21 @@
+[package]
+name = "zr-ls"
+version = "0.2.0"
+edition = "2024"
+description = "List directory contents"
+
+[lib]
+name = "zr_ls"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ls"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

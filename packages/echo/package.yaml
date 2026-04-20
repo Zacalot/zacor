@@ -1,0 +1,20 @@
+name: echo
+version: "0.2.0"
+binary: echo
+description: "Display text"
+protocol: true
+build:
+  command: "cargo build --release --bin echo"
+  output: ../../target/release
+commands:
+  default:
+    description: "Echo text to stdout"
+    args:
+      text:
+        type: string
+        default: ""
+    output:
+      type: text
+      field: text
+      schema:
+        text: string

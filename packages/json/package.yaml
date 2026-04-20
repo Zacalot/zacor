@@ -1,0 +1,28 @@
+name: json
+version: "0.1.0"
+binary: json
+description: "JSON formatter and validator"
+protocol: true
+build:
+  command: "cargo build --release --bin json"
+  output: ../../target/release
+commands:
+  default:
+    description: "Format or validate JSON"
+    args:
+      indent:
+        type: integer
+        default: 2
+      compact:
+        type: bool
+        flag: compact
+      validate:
+        type: bool
+        flag: validate
+    input: text
+    output:
+      type: text
+      field: output
+      schema:
+        output: string
+        valid: bool

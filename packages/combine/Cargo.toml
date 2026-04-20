@@ -1,0 +1,21 @@
+[package]
+name = "zr-combine"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-source record operations (append, prepend, merge, join, zip)"
+
+[lib]
+name = "zr_combine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "combine"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

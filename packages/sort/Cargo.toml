@@ -1,0 +1,21 @@
+[package]
+name = "zr-sort"
+version = "0.1.0"
+edition = "2024"
+description = "Sort and reverse JSON record streams"
+
+[lib]
+name = "zr_sort"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sort"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

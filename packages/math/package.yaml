@@ -1,0 +1,151 @@
+name: math
+version: "0.1.0"
+binary: math
+description: "Numeric aggregation and element-wise operations"
+protocol: true
+build:
+  command: "cargo build --release --bin math"
+  output: ../../target/release
+commands:
+  sum:
+    description: "Sum numeric values"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  avg:
+    description: "Average numeric values"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  min:
+    description: "Minimum value"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  max:
+    description: "Maximum value"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  median:
+    description: "Median value"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  mode:
+    description: "Most frequent value"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  product:
+    description: "Product of values"
+    args:
+      field:
+        type: string
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  stddev:
+    description: "Standard deviation"
+    args:
+      field:
+        type: string
+      sample:
+        type: bool
+        flag: sample
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  variance:
+    description: "Variance"
+    args:
+      field:
+        type: string
+      sample:
+        type: bool
+        flag: sample
+    input: jsonl
+    output:
+      type: record
+      schema:
+        value: number
+  count:
+    description: "Count records"
+    input: jsonl
+    output:
+      type: record
+      schema:
+        count: integer
+  round:
+    description: "Round numeric values"
+    args:
+      field:
+        type: string
+        required: true
+      precision:
+        type: integer
+        default: 0
+    input: jsonl
+    output:
+      type: table
+  ceil:
+    description: "Ceiling of numeric values"
+    args:
+      field:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  floor:
+    description: "Floor of numeric values"
+    args:
+      field:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  abs:
+    description: "Absolute value"
+    args:
+      field:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table

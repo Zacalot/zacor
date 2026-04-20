@@ -1,0 +1,23 @@
+[package]
+name = "zr-web"
+version = "0.1.0"
+edition = "2024"
+description = "Unified web search and fetch tools"
+
+[lib]
+name = "zr_web"
+path = "src/lib.rs"
+
+[[bin]]
+name = "web"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+scraper = "0.23"
+url = "2"
+
+[build-dependencies]
+zacor-package-build.workspace = true

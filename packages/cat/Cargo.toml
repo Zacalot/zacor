@@ -1,0 +1,21 @@
+[package]
+name = "zr-cat"
+version = "0.2.0"
+edition = "2024"
+description = "Concatenate and display files"
+
+[lib]
+name = "zr_cat"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cat"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

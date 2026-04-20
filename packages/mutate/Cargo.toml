@@ -1,0 +1,22 @@
+[package]
+name = "zr-mutate"
+version = "0.1.0"
+edition = "2024"
+description = "Field value mutations (insert, update, upsert)"
+
+[lib]
+name = "zr_mutate"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mutate"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+zr-expr.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

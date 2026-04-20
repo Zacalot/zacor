@@ -1,0 +1,24 @@
+[package]
+name = "zr-wc"
+version = "0.2.0"
+edition = "2024"
+description = "Count lines, words, and bytes"
+
+[lib]
+name = "zr_wc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wc"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true
+
+[dev-dependencies]
+zr-cat = { path = "../cat" }

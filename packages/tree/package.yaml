@@ -1,0 +1,22 @@
+name: tree
+version: "0.1.0"
+binary: tree
+description: "Show filesystem tree"
+protocol: true
+build:
+  command: "cargo build --release --bin tree"
+  output: ../../target/release
+commands:
+  default:
+    description: "Show filesystem tree (respects .gitignore)"
+    args:
+      path:
+        type: path
+        default: "."
+      depth:
+        type: integer
+        flag: depth
+    output:
+      type: table
+      schema:
+        line: string

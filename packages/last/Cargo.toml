@@ -1,0 +1,21 @@
+[package]
+name = "zr-last"
+version = "0.1.0"
+edition = "2024"
+description = "Take last N records from stream"
+
+[lib]
+name = "zr_last"
+path = "src/lib.rs"
+
+[[bin]]
+name = "last"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

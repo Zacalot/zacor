@@ -1,0 +1,305 @@
+name: rand
+version: "0.1.0"
+binary: rand
+description: "Random data generation"
+protocol: true
+build:
+  command: "cargo build --release --bin rand"
+  output: ../../target/release
+commands:
+  int:
+    description: "Generate random integers"
+    args:
+      min:
+        type: integer
+      max:
+        type: integer
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: number
+  float:
+    description: "Generate random floats"
+    args:
+      min:
+        type: number
+      max:
+        type: number
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: number
+  bool:
+    description: "Generate random booleans"
+    args:
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: bool
+  word:
+    description: "Pick random words from dictionary"
+    args:
+      pool:
+        type: string
+      locale:
+        type: string
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  syllable:
+    description: "Generate invented words from syllables"
+    args:
+      set:
+        type: string
+      min_syllables:
+        type: integer
+      max_syllables:
+        type: integer
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  name:
+    description: "Generate random person names"
+    args:
+      kind:
+        type: string
+      pool:
+        type: string
+      locale:
+        type: string
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        first: string
+        last: string
+  char:
+    description: "Generate random character strings"
+    args:
+      len:
+        type: integer
+      charset:
+        type: string
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  uuid:
+    description: "Generate random UUID v4"
+    args:
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  phrase:
+    description: "Generate random word phrases"
+    args:
+      words:
+        type: integer
+      sep:
+        type: string
+      pool:
+        type: string
+      locale:
+        type: string
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  pass:
+    description: "Generate random passwords"
+    args:
+      len:
+        type: integer
+      upper:
+        type: bool
+        flag: upper
+      lower:
+        type: bool
+        flag: lower
+      digit:
+        type: bool
+        flag: digit
+      symbol:
+        type: bool
+        flag: symbol
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  pattern:
+    description: "Generate strings from format pattern"
+    args:
+      fmt:
+        type: string
+        required: true
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  color:
+    description: "Generate random colors"
+    args:
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        r: number
+        g: number
+        b: number
+  date:
+    description: "Generate random dates"
+    args:
+      min:
+        type: string
+      max:
+        type: string
+      count:
+        type: integer
+      seed:
+        type: number
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  pick:
+    description: "Pick random items from input, values, or file"
+    args:
+      values:
+        type: string
+      file:
+        type: string
+      replace:
+        type: bool
+        flag: replace
+      count:
+        type: integer
+      seed:
+        type: number
+    input: jsonl
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  shuffle:
+    description: "Shuffle input records into random order"
+    args:
+      seed:
+        type: number
+    input: jsonl
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+  character:
+    description: "Generate higher-level character ideas"
+    commands:
+      archetype:
+        description: "Generate random character archetypes"
+        args:
+          include:
+            type: string
+          exclude:
+            type: string
+          count:
+            type: integer
+          seed:
+            type: number
+        output:
+          type: table
+          stream: true
+          schema:
+            value: string
+            kind: string
+            tags: string
+            role: string
+            label: string
+            traits: string
+      motive:
+        description: "Generate random character motives"
+        args:
+          include:
+            type: string
+          exclude:
+            type: string
+          count:
+            type: integer
+          seed:
+            type: number
+        output:
+          type: table
+          stream: true
+          schema:
+            value: string
+            kind: string
+            tags: string
+            drive: string
+            goal: string
+            obstacle: string
+            outcome: string
+            forces: string

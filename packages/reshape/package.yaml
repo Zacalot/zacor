@@ -1,0 +1,77 @@
+name: reshape
+version: "0.1.0"
+binary: reshape
+description: "Structural record transformations (rename, flatten, transpose, wrap, group-by, enumerate, columns, values)"
+protocol: true
+build:
+  command: "cargo build --release --bin reshape"
+  output: ../../target/release
+commands:
+  rename:
+    description: "Rename fields in records"
+    args:
+      column:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  flatten:
+    description: "Flatten nested record fields"
+    args:
+      fields:
+        type: string
+      all:
+        type: bool
+        flag: all
+    input: jsonl
+    output:
+      type: table
+  transpose:
+    description: "Swap rows and columns"
+    args:
+      names:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  wrap:
+    description: "Wrap each value into a named field"
+    args:
+      name:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  group-by:
+    description: "Group records by field value"
+    args:
+      fields:
+        type: string
+        required: true
+      to-table:
+        type: bool
+        flag: to-table
+    input: jsonl
+    output:
+      type: table
+  enumerate:
+    description: "Add zero-based index to records"
+    input: jsonl
+    output:
+      type: table
+  columns:
+    description: "Extract field names from first record"
+    input: jsonl
+    output:
+      type: table
+      schema:
+        value: string
+  values:
+    description: "Extract all values from records"
+    input: jsonl
+    output:
+      type: table
+      schema:
+        value: string

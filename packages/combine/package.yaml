@@ -1,0 +1,71 @@
+name: combine
+version: "0.1.0"
+binary: combine
+description: "Multi-source record operations (append, prepend, merge, join, zip)"
+protocol: true
+build:
+  command: "cargo build --release --bin combine"
+  output: ../../target/release
+commands:
+  append:
+    description: "Append records from second source"
+    args:
+      file:
+        type: string
+      records:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  prepend:
+    description: "Prepend records from second source"
+    args:
+      file:
+        type: string
+      records:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  merge:
+    description: "Merge fields row-by-row"
+    args:
+      file:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  join:
+    description: "SQL-style join on key field"
+    args:
+      file:
+        type: string
+      left-key:
+        type: string
+        required: true
+      right-key:
+        type: string
+      left:
+        type: bool
+        flag: left
+      right:
+        type: bool
+        flag: right
+      outer:
+        type: bool
+        flag: outer
+      prefix:
+        type: string
+      suffix:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  zip:
+    description: "Pair records element-by-element"
+    args:
+      file:
+        type: string
+    input: jsonl
+    output:
+      type: table

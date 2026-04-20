@@ -1,0 +1,24 @@
+name: ls
+version: "0.2.0"
+binary: ls
+description: "List directory contents"
+protocol: true
+build:
+  command: "cargo build --release --bin ls"
+  output: ../../target/release
+commands:
+  default:
+    description: "List directory entries"
+    args:
+      path:
+        type: path
+        default: "."
+      all:
+        type: bool
+        flag: a
+    output:
+      type: table
+      schema:
+        name: string
+        size: filesize
+        kind: string

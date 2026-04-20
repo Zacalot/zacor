@@ -1,0 +1,21 @@
+[package]
+name = "zr-first"
+version = "0.1.0"
+edition = "2024"
+description = "Take first N records from stream"
+
+[lib]
+name = "zr_first"
+path = "src/lib.rs"
+
+[[bin]]
+name = "first"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

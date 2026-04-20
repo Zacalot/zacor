@@ -1,0 +1,18 @@
+name: where
+version: "0.1.0"
+binary: where
+description: "Filter records by expression predicate"
+protocol: true
+build:
+  command: "cargo build --release --bin where"
+  output: ../../target/release
+commands:
+  default:
+    description: "Filter records by expression predicate"
+    args:
+      expr:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table

@@ -1,0 +1,21 @@
+[package]
+name = "zr-math"
+version = "0.1.0"
+edition = "2024"
+description = "Numeric aggregation and element-wise operations"
+
+[lib]
+name = "zr_math"
+path = "src/lib.rs"
+
+[[bin]]
+name = "math"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

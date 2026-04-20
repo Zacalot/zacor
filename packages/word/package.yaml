@@ -1,0 +1,135 @@
+name: word
+version: "0.1.0"
+binary: word
+description: "English vocabulary queries via WordNet"
+protocol: true
+build:
+  command: "cargo build --release --bin word"
+  output: ../../target/release
+commands:
+  lookup:
+    description: "Look up word definitions and senses"
+    args:
+      word:
+        type: string
+        required: true
+      pos:
+        type: string
+        flag: pos
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        pos: string
+        domain: string
+        definition: string
+        examples: string
+        frequency: number
+        sense: number
+  related:
+    description: "Find semantically related words"
+    args:
+      word:
+        type: string
+        required: true
+      relation:
+        type: string
+        flag: relation
+      depth:
+        type: integer
+        flag: depth
+      pos:
+        type: string
+        flag: pos
+      sense:
+        type: integer
+        flag: sense
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        relation: string
+        definition: string
+        pos: string
+        depth: number
+  domain:
+    description: "Browse words by semantic domain"
+    args:
+      domain:
+        type: string
+      count:
+        type: integer
+        flag: count
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        definition: string
+        pos: string
+        count: number
+  random:
+    description: "Pick random words from vocabulary"
+    args:
+      pos:
+        type: string
+        flag: pos
+      domain:
+        type: string
+        flag: domain
+      count:
+        type: integer
+        flag: count
+      seed:
+        type: number
+        flag: seed
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        pos: string
+        domain: string
+        definition: string
+  pattern:
+    description: "Find words matching a wildcard pattern"
+    args:
+      pattern:
+        type: string
+        required: true
+      pos:
+        type: string
+        flag: pos
+      count:
+        type: integer
+        flag: count
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        pos: string
+        definition: string
+  sentence:
+    description: "Generate random sentences from POS templates"
+    args:
+      template:
+        type: string
+        flag: template
+      raw:
+        type: bool
+        flag: raw
+      count:
+        type: integer
+        flag: count
+      seed:
+        type: number
+        flag: seed
+    output:
+      type: table
+      stream: true
+      schema:
+        value: string
+        template: string

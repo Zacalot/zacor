@@ -1,0 +1,18 @@
+name: calc
+version: "0.1.0"
+binary: calc
+description: "Evaluate math expressions"
+protocol: true
+build:
+  command: "cargo build --release --bin calc"
+  output: ../../target/release
+commands:
+  default:
+    description: "Evaluate a math expression"
+    args:
+      expr:
+        type: string
+    output:
+      type: record
+      schema:
+        value: number

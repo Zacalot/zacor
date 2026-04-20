@@ -1,0 +1,16 @@
+zacor_package::commands!("math", {
+    "sum"      => zr_math::cmd_sum [input],
+    "avg"      => zr_math::cmd_avg [input],
+    "min"      => zr_math::cmd_min [input],
+    "max"      => zr_math::cmd_max [input],
+    "median"   => zr_math::cmd_median [input],
+    "mode"     => zr_math::cmd_mode [input],
+    "product"  => zr_math::cmd_product [input],
+    "stddev"   => zr_math::cmd_stddev [input],
+    "variance" => zr_math::cmd_variance [input],
+    "count"    => zr_math::cmd_count [input],
+    "round"    => zr_math::cmd_round [input],
+    "ceil"     => zr_math::cmd_ceil [input],
+    "floor"    => zr_math::cmd_floor [input],
+    "abs"      => zr_math::cmd_abs [input],
+});

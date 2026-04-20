@@ -1,0 +1,24 @@
+name: head
+version: "0.2.0"
+binary: head
+description: "Output first lines of a file"
+protocol: true
+build:
+  command: "cargo build --release --bin head"
+  output: ../../target/release
+commands:
+  default:
+    description: "Show first N lines"
+    args:
+      file:
+        type: path
+      lines:
+        type: integer
+        default: 10
+    input: text
+    output:
+      type: table
+      stream: true
+      schema:
+        line: number
+        content: string

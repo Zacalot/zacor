@@ -1,0 +1,48 @@
+name: mutate
+version: "0.1.0"
+binary: mutate
+description: "Field value mutations (insert, update, upsert)"
+protocol: true
+build:
+  command: "cargo build --release --bin mutate"
+  output: ../../target/release
+commands:
+  insert:
+    description: "Add a new field to each record"
+    args:
+      field:
+        type: string
+        required: true
+      value:
+        type: string
+      expr:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  update:
+    description: "Update an existing field in each record"
+    args:
+      field:
+        type: string
+        required: true
+      value:
+        type: string
+      expr:
+        type: string
+    input: jsonl
+    output:
+      type: table
+  upsert:
+    description: "Add or update a field in each record"
+    args:
+      field:
+        type: string
+        required: true
+      value:
+        type: string
+      expr:
+        type: string
+    input: jsonl
+    output:
+      type: table

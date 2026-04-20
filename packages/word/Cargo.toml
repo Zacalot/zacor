@@ -1,0 +1,28 @@
+[package]
+name = "zr-word"
+version = "0.1.0"
+edition = "2024"
+description = "English vocabulary queries via WordNet"
+
+[lib]
+name = "zr_word"
+path = "src/lib.rs"
+
+[[bin]]
+name = "word"
+path = "src/main.rs"
+
+[features]
+default = ["embedded-data"]
+embedded-data = ["dep:ruzstd"]
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand = "0.8"
+ruzstd = { version = "0.7", optional = true }
+regex = "1"
+
+[build-dependencies]
+zacor-package-build.workspace = true

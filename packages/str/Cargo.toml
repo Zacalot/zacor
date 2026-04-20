@@ -1,0 +1,22 @@
+[package]
+name = "zr-str"
+version = "0.1.0"
+edition = "2024"
+description = "String operations on record fields"
+
+[lib]
+name = "zr_str"
+path = "src/lib.rs"
+
+[[bin]]
+name = "str"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex = "1"
+
+[build-dependencies]
+zacor-package-build.workspace = true

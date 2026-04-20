@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches crates/zacor/Cargo.toml version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          $match = Select-String -Path crates/zacor/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $match) { throw "could not find version in crates/zacor/Cargo.toml" }
+          $cargoVersion = $match.Matches[0].Groups[1].Value
+          if ($tag -ne $cargoVersion) {
+            throw "tag v$tag does not match crates/zacor/Cargo.toml version $cargoVersion"
+          }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p zacor
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "zacor-${{ github.ref_name }}-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory staging | Out-Null
+          Copy-Item target/release/zr.exe,target/release/zacor.exe staging/
+          Compress-Archive -Path staging\* -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File "$name.zip.sha256" -Encoding ascii -NoNewline
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            zacor-*.zip
+            zacor-*.zip.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true

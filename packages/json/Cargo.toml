@@ -1,0 +1,21 @@
+[package]
+name = "zr-json"
+version = "0.1.0"
+edition = "2024"
+description = "JSON formatter and validator"
+
+[lib]
+name = "zr_json"
+path = "src/lib.rs"
+
+[[bin]]
+name = "json"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

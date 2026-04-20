@@ -1,0 +1,21 @@
+[package]
+name = "zr-select"
+version = "0.1.0"
+edition = "2024"
+description = "Project fields from JSON records"
+
+[lib]
+name = "zr_select"
+path = "src/lib.rs"
+
+[[bin]]
+name = "select"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true

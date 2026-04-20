@@ -1,0 +1,25 @@
+name: cat
+version: "0.2.0"
+binary: cat
+description: "Concatenate and display files"
+protocol: true
+build:
+  command: "cargo build --release --bin cat"
+  output: ../../target/release
+commands:
+  default:
+    description: "Output file contents as line records"
+    args:
+      file:
+        type: path
+      lines:
+        type: integer
+      tail:
+        type: integer
+    input: text
+    output:
+      type: table
+      stream: true
+      schema:
+        line: number
+        content: string

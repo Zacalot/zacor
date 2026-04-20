@@ -1,0 +1,24 @@
+[package]
+name = "zr-date"
+version = "0.1.0"
+edition = "2024"
+description = "Date and time operations"
+
+[lib]
+name = "zr_date"
+path = "src/lib.rs"
+
+[[bin]]
+name = "date"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jiff = { version = "0.2", features = ["serde"] }
+jiff-tzdb = "0.1"
+parse_datetime = "0.14"
+
+[build-dependencies]
+zacor-package-build.workspace = true

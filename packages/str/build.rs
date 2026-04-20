@@ -1,0 +1,23 @@
+fn main() {
+    use zacor_package_build::*;
+
+    let fields_arg = ArgSchemaInfo::string("fields").required();
+
+    PackageSpec::from_cargo("str")
+        .command(CommandSpec::named("trim").description("Trim whitespace or characters").args(&[fields_arg.clone(), ArgSchemaInfo::string("char").optional(), ArgSchemaInfo::bool("left").flag("left"), ArgSchemaInfo::bool("right").flag("right")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("replace").description("Replace text in fields").args(&[fields_arg.clone(), ArgSchemaInfo::string("find").required(), ArgSchemaInfo::string("replacement").required(), ArgSchemaInfo::bool("all").flag("all"), ArgSchemaInfo::bool("regex").flag("regex")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("upcase").description("Convert to uppercase").args(&[fields_arg.clone()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("downcase").description("Convert to lowercase").args(&[fields_arg.clone()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("capitalize").description("Capitalize first letter").args(&[fields_arg.clone()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("reverse").description("Reverse string").args(&[fields_arg.clone()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("substring").description("Extract substring").args(&[fields_arg.clone(), ArgSchemaInfo::string("range").required()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("contains").description("Test if field contains string").args(&[fields_arg.clone(), ArgSchemaInfo::string("term").required(), ArgSchemaInfo::bool("ignore-case").flag("ignore-case")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("starts-with").description("Test if field starts with string").args(&[fields_arg.clone(), ArgSchemaInfo::string("term").required(), ArgSchemaInfo::bool("ignore-case").flag("ignore-case")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("ends-with").description("Test if field ends with string").args(&[fields_arg.clone(), ArgSchemaInfo::string("term").required(), ArgSchemaInfo::bool("ignore-case").flag("ignore-case")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("length").description("Get string length").args(&[fields_arg.clone()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("index-of").description("Find index of substring").args(&[fields_arg.clone(), ArgSchemaInfo::string("term").required(), ArgSchemaInfo::bool("end").flag("end")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("split").description("Split string by separator").args(&[fields_arg.clone(), ArgSchemaInfo::string("separator").required(), ArgSchemaInfo::bool("regex").flag("regex")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("join").description("Join array into string").args(&[fields_arg.clone(), ArgSchemaInfo::string("separator").required()]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .command(CommandSpec::named("parse").description("Parse string with pattern").args(&[fields_arg.clone(), ArgSchemaInfo::string("pattern").required(), ArgSchemaInfo::bool("regex").flag("regex")]).input(InputKind::Jsonl).output(OutputSpec::table(&[])))
+        .finish();
+}

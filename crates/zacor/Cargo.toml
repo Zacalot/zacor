@@ -1,0 +1,104 @@
+[package]
+name = "zacor"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors = ["zacalot"]
+repository.workspace = true
+description = "Package manager and dispatcher for zr — install, manage, and run modular CLI packages"
+
+[[bin]]
+name = "zr"
+path = "src/bin/zr.rs"
+
+[[bin]]
+name = "zacor"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "string"] }
+clap_complete = "4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+
+# Version comparison
+semver = "1"
+
+# Config file
+toml = "0.8"
+
+# Invoke template tokenization
+shlex = "1"
+
+# Platform paths
+dirs = "6"
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+timeago = "0.4"
+
+# Formatting
+humansize = "2"
+comfy-table = "7"
+
+# HTTP (GitHub API + http.fetch capability)
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking"] }
+
+# Directory walking with gitignore (fs.walk capability)
+ignore = "0.4"
+
+# parse.tree-sitter capability — code signature extraction for wasm packages
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+
+# render.mermaid capability — mermaid → SVG for wasm packages
+mermaid-rs-renderer = "0.2"
+
+# Archives
+flate2 = "1"
+tar = "0.4"
+zip = "2"
+
+# Checksums
+sha2 = "0.10"
+
+# Binary discovery
+which = "7"
+
+# Error handling
+anyhow = "1"
+
+# Temp directories
+tempfile = "3"
+
+# Async runtime + web server
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8" }
+futures-core = "0.3"
+
+# Protocol types (shared with SDK)
+zacor-package.workspace = true
+
+# Clipboard (for IO provider)
+arboard = "3"
+
+# Wasm runtime (for wasm-packaged modules)
+wasmtime = { version = "28", default-features = false, features = ["cranelift", "runtime", "parallel-compilation"] }
+wasmtime-wasi = "28"
+wasmparser = "0.221"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_JobObjects",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+] }

@@ -1,0 +1,25 @@
+[package]
+name = "zr-rand"
+version = "0.1.0"
+edition = "2024"
+description = "Random data generation"
+
+[lib]
+name = "zr_rand"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rand"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+zr-word = { path = "../word" }
+
+[build-dependencies]
+zacor-package-build.workspace = true

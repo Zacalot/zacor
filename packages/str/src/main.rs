@@ -1,0 +1,17 @@
+zacor_package::commands!("str", {
+    "trim"        => zr_str::cmd_trim [input],
+    "replace"     => zr_str::cmd_replace [input],
+    "upcase"      => zr_str::cmd_upcase [input],
+    "downcase"    => zr_str::cmd_downcase [input],
+    "capitalize"  => zr_str::cmd_capitalize [input],
+    "reverse"     => zr_str::cmd_reverse [input],
+    "substring"   => zr_str::cmd_substring [input],
+    "contains"    => zr_str::cmd_contains [input],
+    "starts-with" => zr_str::cmd_starts_with [input],
+    "ends-with"   => zr_str::cmd_ends_with [input],
+    "length"      => zr_str::cmd_length [input],
+    "index-of"    => zr_str::cmd_index_of [input],
+    "split"       => zr_str::cmd_split [input],
+    "join"        => zr_str::cmd_join [input],
+    "parse"       => zr_str::cmd_parse [input],
+});

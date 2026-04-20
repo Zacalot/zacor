@@ -1,0 +1,22 @@
+[package]
+name = "zr-calc"
+version = "0.1.0"
+edition = "2024"
+description = "Evaluate math expressions"
+
+[lib]
+name = "zr_calc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "calc"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+fasteval = "0.2"
+
+[build-dependencies]
+zacor-package-build.workspace = true

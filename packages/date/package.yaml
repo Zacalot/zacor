@@ -1,0 +1,213 @@
+name: date
+version: "0.1.0"
+binary: date
+description: "Date and time operations"
+protocol: true
+build:
+  command: "cargo build --release --bin date"
+  output: ../../target/release
+commands:
+  default:
+    description: "Display current datetime or parse a date string"
+    args:
+      date:
+        type: string
+      timezone:
+        type: string
+      utc:
+        type: bool
+        flag: utc
+    output:
+      type: record
+      schema:
+        datetime: datetime
+        date: string
+        time: string
+        year: number
+        month: number
+        day: number
+        hour: number
+        minute: number
+        second: number
+        nanosecond: number
+        weekday: string
+        weekday_num: number
+        week: number
+        day_of_year: number
+        quarter: number
+        timezone: string
+        offset: string
+        unix: number
+        unix_ms: number
+        iso8601: string
+        rfc2822: string
+        rfc9557: string
+        is_dst: bool
+        is_leap_year: bool
+        days_in_month: number
+        days_in_year: number
+  add:
+    description: "Add a duration to a date"
+    args:
+      date:
+        type: string
+      duration:
+        type: string
+        required: true
+      timezone:
+        type: string
+      utc:
+        type: bool
+        flag: utc
+    output:
+      type: record
+      schema:
+        datetime: datetime
+        date: string
+        time: string
+        year: number
+        month: number
+        day: number
+        hour: number
+        minute: number
+        second: number
+        nanosecond: number
+        weekday: string
+        weekday_num: number
+        week: number
+        day_of_year: number
+        quarter: number
+        timezone: string
+        offset: string
+        unix: number
+        unix_ms: number
+        iso8601: string
+        rfc2822: string
+        rfc9557: string
+        is_dst: bool
+        is_leap_year: bool
+        days_in_month: number
+        days_in_year: number
+  diff:
+    description: "Compute the span between two dates"
+    args:
+      from:
+        type: string
+        required: true
+      to:
+        type: string
+    output:
+      type: record
+      schema:
+        from: datetime
+        to: datetime
+        years: number
+        months: number
+        weeks: number
+        days: number
+        hours: number
+        minutes: number
+        seconds: number
+        total_days: number
+        total_hours: number
+        total_seconds: number
+        humanized: string
+        iso8601: string
+  seq:
+    description: "Generate a sequence of dates"
+    args:
+      from:
+        type: string
+      to:
+        type: string
+      count:
+        type: number
+      step:
+        type: string
+      timezone:
+        type: string
+      utc:
+        type: bool
+        flag: utc
+    output:
+      type: table
+      stream: true
+      schema:
+        datetime: datetime
+        date: string
+        time: string
+        year: number
+        month: number
+        day: number
+        hour: number
+        minute: number
+        second: number
+        nanosecond: number
+        weekday: string
+        weekday_num: number
+        week: number
+        day_of_year: number
+        quarter: number
+        timezone: string
+        offset: string
+        unix: number
+        unix_ms: number
+        iso8601: string
+        rfc2822: string
+        rfc9557: string
+        is_dst: bool
+        is_leap_year: bool
+        days_in_month: number
+        days_in_year: number
+  round:
+    description: "Round a datetime to the nearest unit"
+    args:
+      date:
+        type: string
+      to:
+        type: string
+        required: true
+      timezone:
+        type: string
+      utc:
+        type: bool
+        flag: utc
+    output:
+      type: record
+      schema:
+        datetime: datetime
+        date: string
+        time: string
+        year: number
+        month: number
+        day: number
+        hour: number
+        minute: number
+        second: number
+        nanosecond: number
+        weekday: string
+        weekday_num: number
+        week: number
+        day_of_year: number
+        quarter: number
+        timezone: string
+        offset: string
+        unix: number
+        unix_ms: number
+        iso8601: string
+        rfc2822: string
+        rfc9557: string
+        is_dst: bool
+        is_leap_year: bool
+        days_in_month: number
+        days_in_year: number
+  zones:
+    description: "List all IANA timezones"
+    output:
+      type: table
+      stream: true
+      schema:
+        name: string
+        offset: string
+        abbreviation: string
+        is_dst: bool

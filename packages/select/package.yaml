@@ -1,0 +1,29 @@
+name: select
+version: "0.1.0"
+binary: select
+description: "Project fields from JSON records"
+protocol: true
+build:
+  command: "cargo build --release --bin select"
+  output: ../../target/release
+commands:
+  default:
+    description: "Select fields from JSON input"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+      schema:
+        value: string
+  reject:
+    description: "Remove specified fields from JSON input"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table

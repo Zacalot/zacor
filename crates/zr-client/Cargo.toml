@@ -1,0 +1,17 @@
+[package]
+name = "zr-client"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin zr client — minimal binary that dispatches to the zacor daemon over IPC"
+
+[[bin]]
+name = "zr-client"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+# Pulled in so the thin client keeps parity with the fat zr for the
+# fs.walk capability (gitignore-aware directory walking).
+ignore = "0.4"

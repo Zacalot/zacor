@@ -1,0 +1,206 @@
+name: str
+version: "0.1.0"
+binary: str
+description: "String operations on record fields"
+protocol: true
+build:
+  command: "cargo build --release --bin str"
+  output: ../../target/release
+commands:
+  trim:
+    description: "Trim whitespace or characters"
+    args:
+      fields:
+        type: string
+        required: true
+      char:
+        type: string
+      left:
+        type: bool
+        flag: left
+      right:
+        type: bool
+        flag: right
+    input: jsonl
+    output:
+      type: table
+  replace:
+    description: "Replace text in fields"
+    args:
+      fields:
+        type: string
+        required: true
+      find:
+        type: string
+        required: true
+      replacement:
+        type: string
+        required: true
+      all:
+        type: bool
+        flag: all
+      regex:
+        type: bool
+        flag: regex
+    input: jsonl
+    output:
+      type: table
+  upcase:
+    description: "Convert to uppercase"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  downcase:
+    description: "Convert to lowercase"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  capitalize:
+    description: "Capitalize first letter"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  reverse:
+    description: "Reverse string"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  substring:
+    description: "Extract substring"
+    args:
+      fields:
+        type: string
+        required: true
+      range:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  contains:
+    description: "Test if field contains string"
+    args:
+      fields:
+        type: string
+        required: true
+      term:
+        type: string
+        required: true
+      ignore-case:
+        type: bool
+        flag: ignore-case
+    input: jsonl
+    output:
+      type: table
+  starts-with:
+    description: "Test if field starts with string"
+    args:
+      fields:
+        type: string
+        required: true
+      term:
+        type: string
+        required: true
+      ignore-case:
+        type: bool
+        flag: ignore-case
+    input: jsonl
+    output:
+      type: table
+  ends-with:
+    description: "Test if field ends with string"
+    args:
+      fields:
+        type: string
+        required: true
+      term:
+        type: string
+        required: true
+      ignore-case:
+        type: bool
+        flag: ignore-case
+    input: jsonl
+    output:
+      type: table
+  length:
+    description: "Get string length"
+    args:
+      fields:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  index-of:
+    description: "Find index of substring"
+    args:
+      fields:
+        type: string
+        required: true
+      term:
+        type: string
+        required: true
+      end:
+        type: bool
+        flag: end
+    input: jsonl
+    output:
+      type: table
+  split:
+    description: "Split string by separator"
+    args:
+      fields:
+        type: string
+        required: true
+      separator:
+        type: string
+        required: true
+      regex:
+        type: bool
+        flag: regex
+    input: jsonl
+    output:
+      type: table
+  join:
+    description: "Join array into string"
+    args:
+      fields:
+        type: string
+        required: true
+      separator:
+        type: string
+        required: true
+    input: jsonl
+    output:
+      type: table
+  parse:
+    description: "Parse string with pattern"
+    args:
+      fields:
+        type: string
+        required: true
+      pattern:
+        type: string
+        required: true
+      regex:
+        type: bool
+        flag: regex
+    input: jsonl
+    output:
+      type: table

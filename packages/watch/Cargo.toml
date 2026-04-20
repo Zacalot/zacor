@@ -1,0 +1,26 @@
+[package]
+name = "zr-watch"
+version = "0.1.0"
+edition = "2024"
+description = "File system watcher"
+
+[lib]
+name = "zr_watch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "watch"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+notify = "7"
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+zacor-package-build.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

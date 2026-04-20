@@ -1,0 +1,24 @@
+[package]
+name = "zr-tree"
+version = "0.1.0"
+edition = "2024"
+description = "Show filesystem tree"
+
+[lib]
+name = "zr_tree"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tree"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+zacor-package-build.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

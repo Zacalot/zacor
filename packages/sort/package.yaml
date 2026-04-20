@@ -1,0 +1,32 @@
+name: sort
+version: "0.1.0"
+binary: sort
+description: "Sort and reverse JSON record streams"
+protocol: true
+build:
+  command: "cargo build --release --bin sort"
+  output: ../../target/release
+commands:
+  by:
+    description: "Sort records by field(s)"
+    args:
+      fields:
+        type: string
+        required: true
+      reverse:
+        type: bool
+        flag: reverse
+      natural:
+        type: bool
+        flag: natural
+      ignore-case:
+        type: bool
+        flag: ignore-case
+    input: jsonl
+    output:
+      type: table
+  reverse:
+    description: "Reverse the order of records"
+    input: jsonl
+    output:
+      type: table
