@@ -18,6 +18,7 @@ use std::process::Command;
 /// Resolves config through the full layering system:
 /// flags > env > project per-pkg > project [zr] > receipt config > global per-pkg > global [zr] > package defaults
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn build_env_vars(
     home: &Path,
     package_name: &str,
@@ -264,3 +265,6 @@ mod tests {
         assert!(!env_vars.contains_key("ZR_PROJECT"));
     }
 }
+// This file is path-included by both the `zacor` and `zr` crates. `zacor`
+// only uses part of the execution surface, while `zr` uses the full dispatch
+// path.

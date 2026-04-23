@@ -1,9 +1,14 @@
 use crate::error::*;
-use crate::package_definition::{CommandDefinition, OutputDeclaration};
+use crate::package_definition::{CommandDefinition, OutputDeclaration, PackageDefinition};
 use crate::render::RenderMode;
-use std::io::{BufRead, BufWriter, IsTerminal, Write};
-use std::sync::{Arc, Mutex};
-use zacor_package::protocol::{self as proto, Message};
+use std::io::{BufRead, BufWriter, IsTerminal, StdoutLock, Write};
+use serde_json::Value;
+use zacor_host::capability::CapabilityRegistry;
+use zacor_host::router::PackageRouter;
+use zacor_host::session::{
+    InputSource, OutputHandler, SessionConfig, StdioTransport, run_session,
+};
+use zacor_package::protocol::Message;
 
 use super::OutputMode;
 
@@ -24,44 +29,180 @@ pub(super) fn resolve_render_mode(
     }
 }
 
-/// Send a protocol message to a shared writer.
-fn send_message(
-    writer: &Arc<Mutex<BufWriter<Box<dyn Write + Send>>>>,
-    msg: &Message,
-) -> Result<()> {
-    let json = serde_json::to_string(msg).context("failed to serialize protocol message")?;
-    let mut w = writer.lock().unwrap();
-    writeln!(w, "{}", json).context("failed to write to module")?;
-    w.flush().context("failed to flush module writer")
+struct RenderingOutputHandler<'a> {
+    output: &'a Option<OutputDeclaration>,
+    render_mode: Option<RenderMode>,
+    streaming: bool,
+    is_tty: bool,
+    stdout_writer: BufWriter<StdoutLock<'a>>,
+    records: Vec<Value>,
+    streaming_started: bool,
 }
 
-/// Forward the dispatcher's stdin as INPUT messages to the module.
-/// Uses line-by-line reading to avoid splitting multi-byte UTF-8 sequences
-/// at buffer boundaries. Correct for text and jsonl input types.
-fn forward_stdin_as_input(writer: Arc<Mutex<BufWriter<Box<dyn Write + Send>>>>) {
-    let stdin = std::io::stdin();
-    let mut reader = std::io::BufReader::new(stdin.lock());
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {}
-            Err(_) => break,
-        }
-        let msg = Message::Input(proto::Input {
-            data: line.clone(),
-            eof: false,
-        });
-        if send_message(&writer, &msg).is_err() {
-            break;
+impl<'a> RenderingOutputHandler<'a> {
+    fn new(output_mode: OutputMode, command: &'a CommandDefinition) -> Self {
+        let is_tty = std::io::stdout().is_terminal();
+        let render_mode = resolve_render_mode(output_mode, &command.output, is_tty);
+        let stdout_handle = std::io::stdout();
+
+        Self {
+            output: &command.output,
+            render_mode,
+            streaming: command.output.as_ref().is_some_and(|output| output.stream),
+            is_tty,
+            stdout_writer: BufWriter::new(stdout_handle.lock()),
+            records: Vec::new(),
+            streaming_started: false,
         }
     }
-    let eof = Message::Input(proto::Input {
-        data: String::new(),
-        eof: true,
-    });
-    let _ = send_message(&writer, &eof);
+}
+
+impl OutputHandler for RenderingOutputHandler<'_> {
+    fn on_output(&mut self, record: &Value) {
+        if let Some(render_mode) = self.render_mode
+            && self.streaming
+        {
+            if !self.streaming_started {
+                if let Some(output_decl) = self.output {
+                    crate::render::render_streaming_header(
+                        output_decl,
+                        render_mode,
+                        &mut self.stdout_writer,
+                    );
+                }
+                self.streaming_started = true;
+            }
+            if let Some(output_decl) = self.output {
+                crate::render::render_streaming_row(
+                    record,
+                    output_decl,
+                    render_mode,
+                    &mut self.stdout_writer,
+                );
+            }
+        } else if self.render_mode.is_some() {
+            self.records.push(record.clone());
+        } else {
+            let json = serde_json::to_string(record).unwrap_or_default();
+            let _ = writeln!(self.stdout_writer, "{json}");
+            let _ = self.stdout_writer.flush();
+        }
+    }
+
+    fn on_progress(&mut self, fraction: f64) {
+        if self.is_tty {
+            render_progress(fraction);
+        }
+    }
+
+    fn finish(&mut self) {
+        if self.is_tty {
+            eprint!("\r\x1b[K");
+        }
+
+        if let Some(render_mode) = self.render_mode
+            && !self.streaming
+            && !self.records.is_empty()
+            && let Some(output_decl) = self.output
+        {
+            crate::render::render_batch(
+                &self.records,
+                output_decl,
+                render_mode,
+                &mut self.stdout_writer,
+            );
+        }
+        let _ = self.stdout_writer.flush();
+    }
+}
+
+struct StdinInputSource {
+    reader: std::io::BufReader<std::io::Stdin>,
+    line: String,
+}
+
+impl StdinInputSource {
+    fn new() -> Self {
+        Self {
+            reader: std::io::BufReader::new(std::io::stdin()),
+            line: String::new(),
+        }
+    }
+}
+
+impl InputSource for StdinInputSource {
+    fn next_chunk(&mut self) -> Option<String> {
+        self.line.clear();
+        match self.reader.read_line(&mut self.line) {
+            Ok(0) => None,
+            Ok(_) => Some(self.line.clone()),
+            Err(_) => None,
+        }
+    }
+}
+
+pub(crate) struct CallbackOutputHandler<'a> {
+    on_record: &'a mut dyn FnMut(Value) -> std::result::Result<(), String>,
+    error: Option<String>,
+}
+
+impl OutputHandler for CallbackOutputHandler<'_> {
+    fn on_output(&mut self, record: &Value) {
+        if self.error.is_none()
+            && let Err(error) = (self.on_record)(record.clone())
+        {
+            self.error = Some(error);
+        }
+    }
+}
+
+impl CallbackOutputHandler<'_> {
+    pub(crate) fn new(
+        on_record: &mut dyn FnMut(Value) -> std::result::Result<(), String>,
+    ) -> CallbackOutputHandler<'_> {
+        CallbackOutputHandler {
+            on_record,
+            error: None,
+        }
+    }
+
+    pub(crate) fn take_error(&mut self) -> Option<String> {
+        self.error.take()
+    }
+}
+
+pub(crate) fn run_protocol_session_with_handler<'a>(
+    reader: impl BufRead,
+    writer: impl Write + Send + 'static,
+    invoke_msg: &'a Message,
+    send_invoke: bool,
+    package_definition: &'a PackageDefinition,
+    command: &'a CommandDefinition,
+    capabilities: &'a CapabilityRegistry,
+    package_router: Option<&'a dyn PackageRouter>,
+    output_handler: &'a mut dyn OutputHandler,
+    input_source: Option<&'a mut dyn InputSource>,
+    depth: usize,
+    max_depth: usize,
+) -> Result<i32> {
+    let mut transport = StdioTransport::new(reader, writer);
+    run_session(
+        &mut transport,
+        SessionConfig {
+            invoke: invoke_msg,
+            send_invoke,
+            package_name: Some(&package_definition.name),
+            package_definition: Some(package_definition),
+            command,
+            capabilities,
+            package_router,
+            output_handler,
+            input_source,
+            depth,
+            max_depth,
+        },
+    )
+    .map_err(anyhow::Error::from)
 }
 
 /// Run a protocol session over generic reader/writer.
@@ -70,128 +211,34 @@ pub(crate) fn run_protocol_session(
     reader: impl BufRead,
     writer: impl Write + Send + 'static,
     invoke_msg: &Message,
+    package_definition: &PackageDefinition,
     command: &CommandDefinition,
     output_mode: OutputMode,
+    capabilities: &CapabilityRegistry,
+    package_router: Option<&dyn PackageRouter>,
+    depth: usize,
+    max_depth: usize,
 ) -> Result<i32> {
-    let has_input = match invoke_msg {
-        Message::Invoke(inv) => inv.input,
-        _ => false,
-    };
+    let mut output_handler = RenderingOutputHandler::new(output_mode, command);
+    let mut input_source = matches!(invoke_msg, Message::Invoke(inv) if inv.input)
+        .then(StdinInputSource::new);
 
-    // Shared writer for module (input thread + capability responses)
-    let module_writer: Arc<Mutex<BufWriter<Box<dyn Write + Send>>>> =
-        Arc::new(Mutex::new(BufWriter::new(Box::new(writer))));
-    send_message(&module_writer, invoke_msg)?;
-
-    // Forward stdin as INPUT messages if the command declares input and stdin is piped
-    if has_input {
-        let w = module_writer.clone();
-        std::thread::Builder::new()
-            .name("zr-input-fwd".into())
-            .spawn(move || forward_stdin_as_input(w))
-            .context("failed to spawn input forwarding thread")?;
-    }
-
-    // Protocol message loop
-    let is_tty = std::io::stdout().is_terminal();
-    let render_mode = resolve_render_mode(output_mode, &command.output, is_tty);
-    let streaming = command.output.as_ref().is_some_and(|o| o.stream);
-
-    let mut records: Vec<serde_json::Value> = Vec::new();
-    let mut exit_code: Option<i32> = None;
-    let mut streaming_started = false;
-
-    // Set up stdout for rendering/output
-    let stdout_handle = std::io::stdout();
-    let mut stdout_writer = BufWriter::new(stdout_handle.lock());
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        if line.is_empty() {
-            continue;
-        }
-
-        let msg: Message = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(_) => continue, // Ignore unknown message types per spec
-        };
-
-        match msg {
-            Message::Output(output) => {
-                if let Some(render_mode) = render_mode
-                    && streaming
-                {
-                    // Streaming render: emit each row as it arrives
-                    if !streaming_started {
-                        if let Some(output_decl) = &command.output {
-                            crate::render::render_streaming_header(
-                                output_decl,
-                                render_mode,
-                                &mut stdout_writer,
-                            );
-                        }
-                        streaming_started = true;
-                    }
-                    if let Some(output_decl) = &command.output {
-                        crate::render::render_streaming_row(
-                            &output.record,
-                            output_decl,
-                            render_mode,
-                            &mut stdout_writer,
-                        );
-                    }
-                } else if render_mode.is_some() {
-                    // Batch: collect for render at end
-                    records.push(output.record);
-                } else {
-                    // Raw JSONL (piped or --json): output just the record payload
-                    let json = serde_json::to_string(&output.record).unwrap_or_default();
-                    let _ = writeln!(stdout_writer, "{}", json);
-                    let _ = stdout_writer.flush();
-                }
-            }
-            Message::Progress(progress) => {
-                if is_tty {
-                    render_progress(progress.fraction);
-                }
-            }
-            Message::CapabilityReq(req) => {
-                let res = crate::capability_provider::handle(&req);
-                if send_message(&module_writer, &Message::CapabilityRes(res)).is_err() {
-                    break;
-                }
-            }
-            Message::Done(done) => {
-                if let Some(ref error) = done.error {
-                    eprintln!("error: {}", error);
-                }
-                exit_code = Some(done.exit_code);
-                break;
-            }
-            _ => {} // Ignore unexpected messages
-        }
-    }
-
-    // Clear progress line if we rendered any
-    if is_tty {
-        eprint!("\r\x1b[K");
-    }
-
-    // Batch render collected records
-    if let Some(render_mode) = render_mode
-        && !streaming
-        && !records.is_empty()
-    {
-        if let Some(output_decl) = &command.output {
-            crate::render::render_batch(&records, output_decl, render_mode, &mut stdout_writer);
-        }
-    }
-    let _ = stdout_writer.flush();
-
-    Ok(exit_code.unwrap_or(1))
+    run_protocol_session_with_handler(
+        reader,
+        writer,
+        invoke_msg,
+        true,
+        package_definition,
+        command,
+        capabilities,
+        package_router,
+        &mut output_handler,
+        input_source
+            .as_mut()
+            .map(|source| source as &mut dyn InputSource),
+        depth,
+        max_depth,
+    )
 }
 
 /// Render a progress bar on stderr (in-place update).

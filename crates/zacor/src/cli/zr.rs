@@ -1,5 +1,5 @@
-use crate::{dispatch, paths, receipt};
-use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use crate::{daemon_client, dispatch, paths, receipt};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -64,10 +64,26 @@ impl ZrCli {
     }
 }
 
-#[derive(clap::Subcommand)]
+#[derive(Subcommand)]
 enum ZrCommand {
+    /// Manage the zr daemon
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+
     #[command(external_subcommand)]
     Module(Vec<String>),
+}
+
+#[derive(Subcommand)]
+enum DaemonAction {
+    /// Start the daemon (foreground)
+    Start,
+    /// Stop a running daemon
+    Stop,
+    /// Show daemon and service status
+    Status,
 }
 
 /// Build the dynamic "Available packages" section for `zr --help`.
@@ -128,6 +144,7 @@ pub fn run() -> i32 {
     let output_mode = cli.output_mode();
 
     match cli.command {
+        Some(ZrCommand::Daemon { action }) => run_daemon(&home, action),
         Some(ZrCommand::Module(args)) => {
             let module_name = &args[0];
             let module_args: Vec<String> = args[1..].to_vec();
@@ -146,6 +163,70 @@ pub fn run() -> i32 {
             println!();
             0
         }
+    }
+}
+
+fn run_daemon(home: &Path, action: DaemonAction) -> i32 {
+    match action {
+        DaemonAction::Start => {
+            match std::process::Command::new(crate::resolve_peer_binary("zr-daemon"))
+                .env("ZR_HOME", home)
+                .status()
+            {
+                Ok(status) => status.code().unwrap_or(1),
+                Err(e) => {
+                    eprintln!("error: failed to run `zr-daemon`: {}", e);
+                    1
+                }
+            }
+        }
+        DaemonAction::Stop => match daemon_client::connect() {
+            Some(stream) => match daemon_client::shutdown(&stream) {
+                Ok(_) => {
+                    println!("daemon stopped");
+                    0
+                }
+                Err(e) => {
+                    if e.to_string().contains("connection") {
+                        println!("daemon stopped");
+                        0
+                    } else {
+                        eprintln!("error: {:#}", e);
+                        1
+                    }
+                }
+            },
+            None => {
+                println!("daemon is not running");
+                0
+            }
+        },
+        DaemonAction::Status => match daemon_client::connect() {
+            Some(stream) => match daemon_client::status(&stream) {
+                Ok(resp) => {
+                    println!("daemon: running");
+                    if let Some(services) = resp.services {
+                        if services.is_empty() {
+                            println!("services: none");
+                        } else {
+                            println!("services:");
+                            for svc in services {
+                                println!("  {} - port {} ({})", svc.name, svc.port, svc.status);
+                            }
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("error: {:#}", e);
+                    1
+                }
+            },
+            None => {
+                println!("daemon: not running");
+                0
+            }
+        },
     }
 }
 

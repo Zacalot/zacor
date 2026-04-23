@@ -10,7 +10,7 @@ description = "Package SDK for zacor/zr — format detection, output helpers, an
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 regex = "1"
-data-encoding = "2"
+zacor-protocol.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

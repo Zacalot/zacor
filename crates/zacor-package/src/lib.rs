@@ -35,6 +35,26 @@ pub use serde::Serialize;
 pub use serde_json;
 pub use serde_json::json;
 
+pub fn invoke_streaming(
+    package: &str,
+    command: &str,
+    args: &std::collections::BTreeMap<String, String>,
+    mut on_record: impl FnMut(serde_json::Value),
+) -> std::io::Result<i32> {
+    runtime::invoke_package_streaming(package, command, args.clone(), move |record| {
+        on_record(record)
+    })
+}
+
+pub fn invoke(
+    package: &str,
+    command: &str,
+    args: &std::collections::BTreeMap<String, String>,
+) -> std::io::Result<std::vec::IntoIter<serde_json::Value>> {
+    let (records, _exit_code) = runtime::invoke_package(package, command, args.clone())?;
+    Ok(records.into_iter())
+}
+
 /// Expands to the standard `pub mod args` that includes the build-generated
 /// arg structs. Use this in lib.rs.
 #[macro_export]

@@ -44,7 +44,7 @@ pub fn run(home: &Path, features: &[String]) -> Result<()> {
         }
 
         eprint!("  {name}... ");
-        let status = std::process::Command::new("zr")
+        let status = std::process::Command::new(crate::resolve_zr_binary())
             .args(package_init_args(name, &features_csv))
             .status();
 

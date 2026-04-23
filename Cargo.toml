@@ -1,8 +1,13 @@
 [workspace]
 members = [
     "crates/zacor",
+    "crates/zacor-host",
     "crates/zacor-package",
     "crates/zacor-package-build",
+    "crates/zacor-protocol",
+    "crates/zr",
+    "crates/zr-daemon",
+    "crates/zred",
     "crates/zr-client",
     "crates/zr-expr",
 
@@ -34,6 +39,8 @@ members = [
     "packages/json",
 
     "packages/tree",
+    "packages/treesitter",
+    "packages/mermaid",
 ]
 resolver = "3"
 
@@ -43,8 +50,10 @@ license = "MIT"
 repository = "https://github.com/Zacalot/zacor"
 
 [workspace.dependencies]
+zacor-host = { version = "0.1", path = "crates/zacor-host" }
 zacor-package = { version = "0.1", path = "crates/zacor-package" }
 zacor-package-build = { version = "0.1", path = "crates/zacor-package-build" }
+zacor-protocol = { version = "0.1", path = "crates/zacor-protocol" }
 zr-expr = { version = "0.1", path = "crates/zr-expr" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

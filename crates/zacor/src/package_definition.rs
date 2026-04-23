@@ -212,13 +212,20 @@ pub struct BinaryDep {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceSection {
-    pub start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub library: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -559,11 +566,35 @@ commands:
 "#;
         let def = parse(yaml).unwrap();
         let svc = def.service.as_ref().unwrap();
+        assert_eq!(svc.start.as_deref(), Some("my-server --port {port}"));
         assert_eq!(svc.port, Some(8080));
         assert_eq!(svc.health.as_deref(), Some("/health"));
         assert_eq!(svc.startup.as_deref(), Some("eager"));
         let exec = def.execution.as_ref().unwrap();
         assert_eq!(exec.default.as_deref(), Some("service"));
+    }
+
+    #[test]
+    fn test_library_service_section() {
+        let yaml = r#"
+name: zr-lib
+version: "0.1.0"
+wasm: zr-lib.wasm
+protocol: true
+service:
+  library: true
+  idle_timeout_secs: 600
+  max_concurrent: 4
+commands:
+  default:
+    description: Library entrypoint
+"#;
+        let def = parse(yaml).unwrap();
+        let svc = def.service.as_ref().unwrap();
+        assert_eq!(svc.start, None);
+        assert!(svc.library);
+        assert_eq!(svc.idle_timeout_secs, Some(600));
+        assert_eq!(svc.max_concurrent, Some(4));
     }
 
     #[test]

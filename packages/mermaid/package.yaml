@@ -1,0 +1,19 @@
+name: zr-mermaid
+version: "0.1.0"
+binary: zr-mermaid
+description: "Mermaid rendering package"
+protocol: true
+build:
+  command: "cargo build --release --bin zr-mermaid"
+  output: ../../target/release
+commands:
+  render:
+    description: "Render mermaid source to SVG"
+    args:
+      source:
+        type: string
+        required: true
+    output:
+      type: record
+      schema:
+        svg: string

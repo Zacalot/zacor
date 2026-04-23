@@ -179,6 +179,58 @@ pub(crate) fn capability_call(
     }
 }
 
+pub(crate) fn invoke_package_streaming(
+    package: &str,
+    command: &str,
+    args: std::collections::BTreeMap<String, String>,
+    mut on_record: impl FnMut(serde_json::Value),
+) -> io::Result<i32> {
+    let rt = get_runtime()?;
+    let id = rt.id_counter.fetch_add(1, Ordering::Relaxed);
+    send_message(&Message::InvokePackage(InvokePackage {
+        id,
+        package: package.to_string(),
+        command: command.to_string(),
+        args,
+        input: false,
+    }))?;
+
+    loop {
+        let msg = read_next_message(rt)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "protocol channel closed while waiting for package invocation",
+            )
+        })?;
+
+        match msg {
+            Message::InvokePackageOutput(output) if output.id == id => {
+                on_record(output.record);
+            }
+            Message::InvokePackageDone(done) if done.id == id => {
+                if let Some(error) = done.error {
+                    return Err(io::Error::other(error));
+                }
+                return Ok(done.exit_code);
+            }
+            Message::Input(input) => {
+                rt.input_buffer.lock().unwrap().push_back(input);
+            }
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn invoke_package(
+    package: &str,
+    command: &str,
+    args: std::collections::BTreeMap<String, String>,
+) -> io::Result<(Vec<serde_json::Value>, i32)> {
+    let mut records = Vec::new();
+    let exit_code = invoke_package_streaming(package, command, args, |record| records.push(record))?;
+    Ok((records, exit_code))
+}
+
 /// Read the next INVOKE message from the runtime's reader. Skips any
 /// other message types per the protocol's forward-compat rule. Returns
 /// `Ok(None)` on EOF — callers use this to terminate service loops.

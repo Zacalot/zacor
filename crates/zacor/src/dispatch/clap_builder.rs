@@ -157,6 +157,7 @@ fn parse_number(s: &str) -> std::result::Result<String, String> {
 /// Parse CLI args using a clap Command built from a PackageDefinition.
 /// Returns (command_path, parsed_flags) where command_path is like
 /// "default", "transcribe", or "transcribe.batch".
+#[allow(dead_code)]
 pub(super) fn clap_parse(
     cmd: clap::Command,
     pkg_name: &str,
@@ -192,6 +193,7 @@ pub(super) fn clap_parse(
 }
 
 /// Recursively extract the deepest matched subcommand and its args.
+#[allow(dead_code)]
 fn extract_from_command(
     matches: &clap::ArgMatches,
     cmd_def: &CommandDefinition,
@@ -213,6 +215,7 @@ fn extract_from_command(
 }
 
 /// Extract arg values from clap matches using the argument definitions.
+#[allow(dead_code)]
 fn extract_args(
     matches: &clap::ArgMatches,
     arg_defs: &BTreeMap<String, ArgumentDefinition>,
@@ -238,6 +241,7 @@ fn extract_args(
 }
 
 /// Look up a CommandDefinition by dot-separated path (e.g., "transcribe.batch").
+#[allow(dead_code)]
 pub(super) fn find_command<'a>(
     commands: &'a BTreeMap<String, CommandDefinition>,
     path: &str,
@@ -665,3 +669,6 @@ commands:
         assert!(result.is_err());
     }
 }
+// This file is path-included by both the `zacor` and `zr` crates. Some
+// dispatch helpers are only exercised by `zr`, while `zacor` only uses the
+// clap command builder for completions.

@@ -1,0 +1,22 @@
+[package]
+name = "zr-mermaid"
+version = "0.1.0"
+edition = "2024"
+description = "Mermaid rendering package"
+
+[lib]
+name = "zr_mermaid"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zr-mermaid"
+path = "src/main.rs"
+
+[dependencies]
+zacor-package.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+mermaid-rs-renderer = "0.2"
+
+[build-dependencies]
+zacor-package-build.workspace = true

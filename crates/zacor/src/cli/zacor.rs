@@ -1,5 +1,6 @@
-use crate::{dispatch, paths, receipt};
+use crate::{dispatch_clap_builder, paths, receipt};
 use clap::{Parser, Subcommand};
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "zacor", version, about = "Package manager for zr")]
@@ -230,66 +231,36 @@ pub fn run() -> i32 {
 
 fn run_daemon(home: &std::path::Path, action: DaemonAction) -> i32 {
     match action {
-        DaemonAction::Start => {
-            let server = crate::daemon::DaemonServer::new(home.to_path_buf());
-            match server.run() {
-                Ok(()) => 0,
-                Err(e) => {
-                    eprintln!("error: {:#}", e);
-                    1
-                }
+        DaemonAction::Start => match Command::new(crate::resolve_zr_daemon_binary())
+            .env("ZR_HOME", home)
+            .status()
+        {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("error: failed to run `zr-daemon`: {}", e);
+                1
             }
-        }
-        DaemonAction::Stop => {
-            match crate::daemon_client::connect() {
-                Some(stream) => {
-                    match crate::daemon_client::shutdown(&stream) {
-                        Ok(_) => {
-                            println!("daemon stopped");
-                            0
-                        }
-                        Err(e) => {
-                            // Connection reset is expected when daemon shuts down
-                            if e.to_string().contains("connection") {
-                                println!("daemon stopped");
-                                0
-                            } else {
-                                eprintln!("error: {:#}", e);
-                                1
-                            }
-                        }
-                    }
-                }
-                None => {
-                    println!("daemon is not running");
-                    0
-                }
+        },
+        DaemonAction::Stop => match Command::new(crate::resolve_zr_binary())
+            .env("ZR_HOME", home)
+            .args(["daemon", "stop"])
+            .status()
+        {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("error: failed to run `zr daemon stop`: {}", e);
+                1
             }
-        }
-        DaemonAction::Status => match crate::daemon_client::connect() {
-            Some(stream) => match crate::daemon_client::status(&stream) {
-                Ok(resp) => {
-                    println!("daemon: running");
-                    if let Some(services) = resp.services {
-                        if services.is_empty() {
-                            println!("services: none");
-                        } else {
-                            println!("services:");
-                            for svc in services {
-                                println!("  {} — port {} ({})", svc.name, svc.port, svc.status);
-                            }
-                        }
-                    }
-                    0
-                }
-                Err(e) => {
-                    eprintln!("error: {:#}", e);
-                    1
-                }
-            },
-            None => {
-                println!("daemon: not running");
-                0
+        },
+        DaemonAction::Status => match Command::new(crate::resolve_zr_binary())
+            .env("ZR_HOME", home)
+            .args(["daemon", "status"])
+            .status()
+        {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("error: failed to run `zr daemon status`: {}", e);
+                1
             }
         },
     }
@@ -318,7 +289,7 @@ fn run_completions(home: &std::path::Path, shell_name: &str) -> i32 {
                 continue;
             }
             if let Ok(def) = crate::wasm_manifest::load_from_store(home, name, &r.current) {
-                let pkg_cmd = dispatch::build_clap_command(&def);
+                let pkg_cmd = dispatch_clap_builder::build_clap_command(&def);
                 zr_cmd = zr_cmd.subcommand(pkg_cmd);
             }
         }

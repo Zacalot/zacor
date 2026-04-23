@@ -1,0 +1,25 @@
+[package]
+name = "zr-daemon"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Daemon process for zr runtime services"
+
+[dependencies]
+anyhow = "1"
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+tempfile = "3"
+zacor-host = { workspace = true, features = ["testing"] }
+zacor-package.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_JobObjects",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+] }

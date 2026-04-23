@@ -13,11 +13,16 @@ use std::io::{BufReader, IsTerminal};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::{self, Command, Stdio};
+use zacor_host::capability::CapabilityRegistry;
+use zacor_host::router::{InvocationOutcome, PackageRouter};
 use zacor_package::protocol::{self as proto, Message};
 
 pub use clap_builder::build_clap_command;
 use clap_builder::{clap_parse, find_command};
-use session::{resolve_render_mode, run_protocol_session};
+use session::{
+    CallbackOutputHandler, resolve_render_mode, run_protocol_session,
+    run_protocol_session_with_handler,
+};
 
 /// A resolved package ready for dispatch.
 pub struct ResolvedPackage {
@@ -37,19 +42,13 @@ pub enum OutputMode {
 // ─── Resolve Phase ───────────────────────────────────────────────────
 
 fn resolve(home: &Path, name: &str) -> Result<ResolvedPackage> {
-    let receipt = receipt::read(home, name)?.ok_or_else(|| {
-        anyhow!(
-            "package '{}' not found\nhint: install it with `zacor install <source>`",
-            name
-        )
-    })?;
+    let receipt = match receipt::read(home, name)? {
+        Some(receipt) => receipt,
+        None => return Err(crate::error::DispatchError::PackageNotFound(name.into()).into()),
+    };
 
     if !receipt.active {
-        bail!(
-            "package '{}' is disabled\nhint: run `zacor enable {}`",
-            name,
-            name
-        );
+        return Err(crate::error::DispatchError::Disabled(name.into()).into());
     }
 
     let version = receipt.current.clone();
@@ -97,6 +96,24 @@ fn resolve_mode(resolved: &ResolvedPackage) -> receipt::Mode {
     receipt::Mode::Command
 }
 
+fn verify_dep_declared(caller: Option<&PackageDefinition>, package: &str) -> Result<()> {
+    let Some(caller) = caller else {
+        return Ok(());
+    };
+    if caller.name == package {
+        return Ok(());
+    }
+    if caller.depends.packages.iter().any(|dep| dep.name == package) {
+        return Ok(());
+    }
+
+    bail!(
+        "package '{}' is not declared in depends.packages for '{}'",
+        package,
+        caller.name
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute(
     home: &Path,
@@ -107,6 +124,10 @@ fn execute(
     command: &CommandDefinition,
     parsed_flags: &BTreeMap<String, String>,
     output_mode: OutputMode,
+    capabilities: &CapabilityRegistry,
+    package_router: Option<&dyn PackageRouter>,
+    depth: usize,
+    max_depth: usize,
 ) -> Result<i32> {
     // Wasm packages always speak the module protocol. Route before the
     // native protocol branch so the `wasm` field short-circuits the
@@ -120,6 +141,10 @@ fn execute(
             parsed_flags,
             output_mode,
             env_vars,
+            capabilities,
+            package_router,
+            depth,
+            max_depth,
         );
     }
 
@@ -134,6 +159,10 @@ fn execute(
                 command,
                 parsed_flags,
                 output_mode,
+                capabilities,
+                package_router,
+                depth,
+                max_depth,
             );
         }
         return execute_protocol(
@@ -144,6 +173,10 @@ fn execute(
             parsed_flags,
             output_mode,
             env_vars,
+            capabilities,
+            package_router,
+            depth,
+            max_depth,
         );
     }
 
@@ -160,6 +193,10 @@ fn execute_service(
     command: &CommandDefinition,
     parsed_flags: &BTreeMap<String, String>,
     output_mode: OutputMode,
+    capabilities: &CapabilityRegistry,
+    package_router: Option<&dyn PackageRouter>,
+    depth: usize,
+    max_depth: usize,
 ) -> Result<i32> {
     let service = resolved.definition.service.as_ref().unwrap();
     let port = service.port.ok_or_else(|| {
@@ -190,7 +227,57 @@ fn execute_service(
     ));
 
     // Run protocol session over TCP
-    run_protocol_session(reader, stream, &invoke_msg, command, output_mode)
+    run_protocol_session(
+        reader,
+        stream,
+        &invoke_msg,
+        &resolved.definition,
+        command,
+        output_mode,
+        capabilities,
+        package_router,
+        depth,
+        max_depth,
+    )
+}
+
+const DEFAULT_MAX_CALL_DEPTH: usize = 8;
+
+struct LocalPackageRouter<'a> {
+    home: &'a Path,
+    capabilities: &'a CapabilityRegistry,
+}
+
+impl PackageRouter for LocalPackageRouter<'_> {
+    fn invoke(
+        &self,
+        caller: Option<&PackageDefinition>,
+        package: &str,
+        command: &str,
+        args: &BTreeMap<String, String>,
+        depth: usize,
+        max_depth: usize,
+        on_output: &mut dyn FnMut(serde_json::Value) -> std::result::Result<(), String>,
+    ) -> InvocationOutcome {
+        if let Err(error) = verify_dep_declared(caller, package) {
+            return InvocationOutcome::failure(format!("{:#}", error));
+        }
+
+        match invoke_package_local(
+            self.home,
+            package,
+            command,
+            args,
+            self.capabilities,
+            depth,
+            max_depth,
+            self,
+            on_output,
+        ) {
+            Ok(exit_code) => InvocationOutcome::success(exit_code),
+            Err(error) => InvocationOutcome::failure(format!("{:#}", error)),
+        }
+    }
 }
 
 /// Ensure a service is running by contacting the daemon.
@@ -280,6 +367,10 @@ fn execute_protocol(
     parsed_flags: &BTreeMap<String, String>,
     output_mode: OutputMode,
     env_vars: &BTreeMap<String, String>,
+    capabilities: &CapabilityRegistry,
+    package_router: Option<&dyn PackageRouter>,
+    depth: usize,
+    max_depth: usize,
 ) -> Result<i32> {
     let (program, args) = resolve_launch_command(home, &resolved.definition, &resolved.version)?;
 
@@ -315,7 +406,18 @@ fn execute_protocol(
 
     // Run protocol session over child stdio
     let reader = BufReader::new(child_stdout);
-    let result = run_protocol_session(reader, child_stdin, &invoke_msg, command, output_mode);
+    let result = run_protocol_session(
+        reader,
+        child_stdin,
+        &invoke_msg,
+        &resolved.definition,
+        command,
+        output_mode,
+        capabilities,
+        package_router,
+        depth,
+        max_depth,
+    );
 
     // If session ended without a DONE (e.g. crash), use process exit code
     let _ = child.wait();
@@ -332,6 +434,10 @@ fn execute_wasm(
     parsed_flags: &BTreeMap<String, String>,
     output_mode: OutputMode,
     env_vars: &BTreeMap<String, String>,
+    capabilities: &CapabilityRegistry,
+    package_router: Option<&dyn PackageRouter>,
+    depth: usize,
+    max_depth: usize,
 ) -> Result<i32> {
     let wasm_name = resolved.definition.wasm.as_ref().ok_or_else(|| {
         anyhow!(
@@ -342,12 +448,7 @@ fn execute_wasm(
 
     let wasm_path = paths::store_wasm_path(home, &resolved.definition.name, &resolved.version, wasm_name);
     if !wasm_path.exists() {
-        bail!(
-            "wasm artifact '{}' not found for '{}' v{}\nhint: reinstall with `zacor install <source>`",
-            wasm_name,
-            resolved.definition.name,
-            resolved.version
-        );
+        return Err(crate::error::DispatchError::ArtifactMissing(wasm_path).into());
     }
 
     let debug_timing = std::env::var("ZR_DEBUG_TIMING").is_ok();
@@ -382,8 +483,18 @@ fn execute_wasm(
             );
             let tcp_writer = stream;
             let t_session = std::time::Instant::now();
-            let result =
-                run_protocol_session(tcp_reader, tcp_writer, &invoke_msg, command, output_mode);
+            let result = run_protocol_session(
+                tcp_reader,
+                tcp_writer,
+                &invoke_msg,
+                &resolved.definition,
+                command,
+                output_mode,
+                capabilities,
+                package_router,
+                depth,
+                max_depth,
+            );
             if debug_timing {
                 eprintln!("  [wasm] daemon session: {:?}", t_session.elapsed());
                 eprintln!("  [wasm] TOTAL (daemon): {:?}", t0.elapsed());
@@ -418,10 +529,376 @@ fn execute_wasm(
         controller,
     } = host.invoke(module, env)?;
 
-    let result = run_protocol_session(reader, writer, &invoke_msg, command, output_mode);
+    let result = run_protocol_session(
+        reader,
+        writer,
+        &invoke_msg,
+        &resolved.definition,
+        command,
+        output_mode,
+        capabilities,
+        package_router,
+        depth,
+        max_depth,
+    );
     let _ = controller.finish();
     if debug_timing {
         eprintln!("  [wasm] TOTAL (inproc): {:?}", t0.elapsed());
+    }
+    result
+}
+
+fn invoke_package_local(
+    home: &Path,
+    package: &str,
+    command_path: &str,
+    parsed_flags: &BTreeMap<String, String>,
+    capabilities: &CapabilityRegistry,
+    depth: usize,
+    max_depth: usize,
+    package_router: &dyn PackageRouter,
+    on_output: &mut dyn FnMut(serde_json::Value) -> std::result::Result<(), String>,
+) -> Result<i32> {
+    let resolved = resolve(home, package)?;
+    let command = find_command(&resolved.definition.commands, command_path)?;
+    let (env_vars, placeholders) = build_invocation_env(home, &resolved, command_path, parsed_flags)?;
+
+    if resolved.definition.wasm.is_some() {
+        return execute_wasm_with_handler(
+            home,
+            &resolved,
+            command_path,
+            command,
+            parsed_flags,
+            &env_vars,
+            capabilities,
+            package_router,
+            depth,
+            max_depth,
+            on_output,
+        );
+    }
+
+    if resolved.definition.protocol {
+        let mode = resolve_mode(&resolved);
+        if mode == receipt::Mode::Service && resolved.definition.service.is_some() {
+            return execute_service_with_handler(
+                home,
+                &resolved,
+                command_path,
+                command,
+                parsed_flags,
+                capabilities,
+                package_router,
+                depth,
+                max_depth,
+                on_output,
+            );
+        }
+        return execute_protocol_with_handler(
+            home,
+            &resolved,
+            command_path,
+            command,
+            parsed_flags,
+            &env_vars,
+            capabilities,
+            package_router,
+            depth,
+            max_depth,
+            on_output,
+        );
+    }
+
+    if let Some(ref invoke) = command.invoke {
+        return crate::execute::exec_invoke(invoke, &env_vars, &placeholders);
+    }
+
+    bail!(
+        "cross-package invocation requires a protocol-enabled package, got '{}'",
+        resolved.definition.name
+    )
+}
+
+fn build_invocation_env(
+    home: &Path,
+    resolved: &ResolvedPackage,
+    command_path: &str,
+    parsed_flags: &BTreeMap<String, String>,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>)> {
+    let cwd = std::env::current_dir().ok();
+    let project_root = cwd
+        .as_ref()
+        .and_then(|cwd| paths::discover_project_root(cwd, home));
+    let project_config = project_root
+        .as_ref()
+        .and_then(|root| config::read_project(root).ok());
+    let global_config = config::read_global(home).unwrap_or_default();
+
+    Ok(crate::execute::build_env_vars(
+        home,
+        &resolved.definition.name,
+        command_path,
+        &resolved.version,
+        parsed_flags,
+        find_command(&resolved.definition.commands, command_path)?,
+        &resolved.receipt,
+        &global_config,
+        &resolved.definition.config,
+        project_root.as_deref(),
+        resolved.definition.project_data,
+        project_config.as_ref(),
+        cwd.as_deref(),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_protocol_with_handler(
+    home: &Path,
+    resolved: &ResolvedPackage,
+    command_path: &str,
+    command: &CommandDefinition,
+    parsed_flags: &BTreeMap<String, String>,
+    env_vars: &BTreeMap<String, String>,
+    capabilities: &CapabilityRegistry,
+    package_router: &dyn PackageRouter,
+    depth: usize,
+    max_depth: usize,
+    on_output: &mut dyn FnMut(serde_json::Value) -> std::result::Result<(), String>,
+) -> Result<i32> {
+    let (program, args) = resolve_launch_command(home, &resolved.definition, &resolved.version)?;
+    let mut child = Command::new(&program)
+        .args(&args)
+        .envs(env_vars)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("failed to spawn package '{}'", resolved.definition.name))?;
+
+    let child_stdin = child.stdin.take().unwrap();
+    let child_stdout = child.stdout.take().unwrap();
+    let invoke_msg = Message::Invoke(proto::Invoke::from_str_args(
+        command_path,
+        parsed_flags,
+        command.input.is_some(),
+    ));
+    let reader = BufReader::new(child_stdout);
+    let mut output_handler = CallbackOutputHandler::new(on_output);
+    let result = run_protocol_session_with_handler(
+        reader,
+        child_stdin,
+        &invoke_msg,
+        true,
+        &resolved.definition,
+        command,
+        capabilities,
+        Some(package_router),
+        &mut output_handler,
+        None,
+        depth,
+        max_depth,
+    );
+    let _ = child.wait();
+    if let Some(error) = output_handler.take_error() {
+        bail!("{}", error);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_service_with_handler(
+    home: &Path,
+    resolved: &ResolvedPackage,
+    command_path: &str,
+    command: &CommandDefinition,
+    parsed_flags: &BTreeMap<String, String>,
+    capabilities: &CapabilityRegistry,
+    package_router: &dyn PackageRouter,
+    depth: usize,
+    max_depth: usize,
+    on_output: &mut dyn FnMut(serde_json::Value) -> std::result::Result<(), String>,
+) -> Result<i32> {
+    let service = resolved.definition.service.as_ref().unwrap();
+    let port = service.port.ok_or_else(|| {
+        anyhow!(
+            "service package '{}' must declare a port in service.port",
+            resolved.definition.name
+        )
+    })?;
+    ensure_service_running(home, &resolved.definition.name, port)?;
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).with_context(|| {
+        format!(
+            "failed to connect to service '{}' on port {}",
+            resolved.definition.name, port
+        )
+    })?;
+    let reader = BufReader::new(stream.try_clone().context("failed to clone TCP stream")?);
+    let invoke_msg = Message::Invoke(proto::Invoke::from_str_args(
+        command_path,
+        parsed_flags,
+        command.input.is_some(),
+    ));
+    let mut output_handler = CallbackOutputHandler::new(on_output);
+    let result = run_protocol_session_with_handler(
+        reader,
+        stream,
+        &invoke_msg,
+        true,
+        &resolved.definition,
+        command,
+        capabilities,
+        Some(package_router),
+        &mut output_handler,
+        None,
+        depth,
+        max_depth,
+    );
+    if let Some(error) = output_handler.take_error() {
+        bail!("{}", error);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_wasm_with_handler(
+    home: &Path,
+    resolved: &ResolvedPackage,
+    command_path: &str,
+    command: &CommandDefinition,
+    parsed_flags: &BTreeMap<String, String>,
+    env_vars: &BTreeMap<String, String>,
+    capabilities: &CapabilityRegistry,
+    package_router: &dyn PackageRouter,
+    depth: usize,
+    max_depth: usize,
+    on_output: &mut dyn FnMut(serde_json::Value) -> std::result::Result<(), String>,
+) -> Result<i32> {
+    let wasm_name = resolved.definition.wasm.as_ref().ok_or_else(|| {
+        anyhow!(
+            "internal error: execute_wasm_with_handler called for non-wasm package '{}'",
+            resolved.definition.name
+        )
+    })?;
+    let wasm_path = paths::store_wasm_path(home, &resolved.definition.name, &resolved.version, wasm_name);
+    if !wasm_path.exists() {
+        return Err(crate::error::DispatchError::ArtifactMissing(wasm_path).into());
+    }
+
+    let invoke_msg = Message::Invoke(proto::Invoke::from_str_args(
+        command_path,
+        parsed_flags,
+        command.input.is_some(),
+    ));
+
+    if resolved
+        .definition
+        .service
+        .as_ref()
+        .is_some_and(|service| service.library)
+    {
+        match crate::daemon_client::try_open_library_invoke_stream(
+            home,
+            &resolved.definition.name,
+            &resolved.version,
+            command_path,
+            parsed_flags,
+            env_vars,
+        ) {
+            Ok(Some(stream)) => {
+                let tcp_reader = BufReader::new(
+                    stream
+                        .try_clone()
+                        .context("cloning library invoke stream for session read")?,
+                );
+                let mut output_handler = CallbackOutputHandler::new(on_output);
+                let result = run_protocol_session_with_handler(
+                    tcp_reader,
+                    stream,
+                    &invoke_msg,
+                    false,
+                    &resolved.definition,
+                    command,
+                    capabilities,
+                    Some(package_router),
+                    &mut output_handler,
+                    None,
+                    depth,
+                    max_depth,
+                );
+                if let Some(error) = output_handler.take_error() {
+                    bail!("{}", error);
+                }
+                return result;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!(
+                    "warning: daemon library invoke failed - falling back to fresh instance: {:#}",
+                    error
+                );
+            }
+        }
+    }
+
+    match crate::daemon_client::try_open_dispatch_stream(
+        home,
+        &resolved.definition.name,
+        &resolved.version,
+        env_vars,
+    ) {
+        Ok(Some(stream)) => {
+            let tcp_reader = BufReader::new(stream.try_clone().context("cloning daemon stream for session read")?);
+            let mut output_handler = CallbackOutputHandler::new(on_output);
+            let result = run_protocol_session_with_handler(
+                tcp_reader,
+                stream,
+                &invoke_msg,
+                true,
+                &resolved.definition,
+                command,
+                capabilities,
+                Some(package_router),
+                &mut output_handler,
+                None,
+                depth,
+                max_depth,
+            );
+            if let Some(error) = output_handler.take_error() {
+                bail!("{}", error);
+            }
+            return result;
+        }
+        Ok(None) => {}
+        Err(_) => {}
+    }
+
+    let host = wasm_runtime::WasmHost::shared()?;
+    let module = host.load_module(&wasm_path)?;
+    let env: Vec<(String, String)> = env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let wasm_runtime::WasmSession {
+        writer,
+        reader,
+        controller,
+    } = host.invoke(module, env)?;
+    let mut output_handler = CallbackOutputHandler::new(on_output);
+    let result = run_protocol_session_with_handler(
+        reader,
+        writer,
+        &invoke_msg,
+        true,
+        &resolved.definition,
+        command,
+        capabilities,
+        Some(package_router),
+        &mut output_handler,
+        None,
+        depth,
+        max_depth,
+    );
+    let _ = controller.finish();
+    if let Some(error) = output_handler.take_error() {
+        bail!("{}", error);
     }
     result
 }
@@ -588,6 +1065,11 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
         project_config.as_ref(),
         cwd.as_deref(),
     );
+    let capabilities = crate::providers::build_default_registry();
+    let package_router = LocalPackageRouter {
+        home,
+        capabilities: &capabilities,
+    };
 
     // Execute
     execute(
@@ -599,6 +1081,10 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
         command,
         &parsed_flags,
         output_mode,
+        &capabilities,
+        Some(&package_router),
+        0,
+        DEFAULT_MAX_CALL_DEPTH,
     )
 }
 
@@ -695,10 +1181,13 @@ commands:
         }
         if service {
             def.service = Some(crate::package_definition::ServiceSection {
-                start: "test".into(),
+                start: Some("test".into()),
                 port: Some(9999),
                 health: None,
                 startup: None,
+                library: false,
+                idle_timeout_secs: None,
+                max_concurrent: None,
             });
         }
 

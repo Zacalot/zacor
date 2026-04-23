@@ -5,15 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors = ["zacalot"]
 repository.workspace = true
-description = "Package manager and dispatcher for zr — install, manage, and run modular CLI packages"
-
-[[bin]]
-name = "zr"
-path = "src/bin/zr.rs"
-
-[[bin]]
-name = "zacor"
-path = "src/main.rs"
+description = "Package manager for zr — install, manage, and configure packages"
 
 [dependencies]
 # CLI
@@ -42,24 +34,10 @@ chrono = { version = "0.4", features = ["serde"] }
 timeago = "0.4"
 
 # Formatting
-humansize = "2"
-comfy-table = "7"
 
-# HTTP (GitHub API + http.fetch capability)
+
+# HTTP (GitHub API)
 reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking"] }
-
-# Directory walking with gitignore (fs.walk capability)
-ignore = "0.4"
-
-# parse.tree-sitter capability — code signature extraction for wasm packages
-tree-sitter = "0.26"
-tree-sitter-rust = "0.24"
-tree-sitter-typescript = "0.23"
-tree-sitter-python = "0.25"
-tree-sitter-javascript = "0.25"
-
-# render.mermaid capability — mermaid → SVG for wasm packages
-mermaid-rs-renderer = "0.2"
 
 # Archives
 flate2 = "1"
@@ -77,6 +55,7 @@ anyhow = "1"
 
 # Temp directories
 tempfile = "3"
+thiserror = "1"
 
 # Async runtime + web server
 tokio = { version = "1", features = ["full"] }
@@ -85,20 +64,4 @@ futures-core = "0.3"
 
 # Protocol types (shared with SDK)
 zacor-package.workspace = true
-
-# Clipboard (for IO provider)
-arboard = "3"
-
-# Wasm runtime (for wasm-packaged modules)
-wasmtime = { version = "28", default-features = false, features = ["cranelift", "runtime", "parallel-compilation"] }
-wasmtime-wasi = "28"
-wasmparser = "0.221"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
-    "Win32_System_JobObjects",
-    "Win32_System_Console",
-    "Win32_System_Threading",
-    "Win32_Foundation",
-    "Win32_Security",
-] }
+zacor-host = { workspace = true, features = ["testing"] }

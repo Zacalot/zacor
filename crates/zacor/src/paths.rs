@@ -89,10 +89,14 @@ pub fn store_wasm_path(home: &Path, name: &str, version: &str, wasm_name: &str) 
 /// Skips any `.zr/` whose path matches `zr_home` (the package manager's home directory).
 pub fn discover_project_root(start: &Path, zr_home: &Path) -> Option<PathBuf> {
     let mut current = start;
+    let zr_home_root = zr_home.parent();
     loop {
         let zr_dir = current.join(".zr");
         if zr_dir.is_dir() && zr_dir != zr_home {
             return Some(current.to_path_buf());
+        }
+        if zr_home_root.is_some_and(|root| current == root) {
+            return None;
         }
         match current.parent() {
             Some(parent) => current = parent,
@@ -254,23 +258,28 @@ mod tests {
 
     #[test]
     fn test_discover_project_root_none() {
-        let root = discover_project_root(
-            Path::new(if cfg!(windows) { "C:\\" } else { "/" }),
-            Path::new(DUMMY_HOME),
-        );
+        let tmp = tempfile::tempdir().unwrap();
+        let start = tmp.path().join("workspace").join("src");
+        fs::create_dir_all(&start).unwrap();
+
+        let zr_home = super::zr_home().unwrap_or_else(|_| PathBuf::from(DUMMY_HOME));
+        let root = discover_project_root(&start, &zr_home);
         assert!(root.is_none());
     }
 
     #[test]
     fn test_discover_skips_zr_home() {
-        // Use the real ZR_HOME so the walk doesn't find any OTHER .zr/ above
-        let real_home = super::zr_home().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let start = tmp.path().join("myapp");
+        let zr_home = super::zr_home().unwrap();
+        let home_root = zr_home.parent().unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("zacor-paths-")
+            .tempdir_in(home_root)
+            .unwrap();
+
+        let start = tmp.path().join("projects").join("myapp");
         fs::create_dir_all(&start).unwrap();
 
-        // No .zr/ in the temp tree; the walk may hit ~/.zr but should skip it
-        let root = discover_project_root(&start, &real_home);
+        let root = discover_project_root(&start, &zr_home);
         assert!(root.is_none());
     }
 

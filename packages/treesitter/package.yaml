@@ -1,0 +1,28 @@
+name: zr-treesitter
+version: "0.1.0"
+binary: zr-treesitter
+description: "Tree-sitter declaration extraction package"
+protocol: true
+build:
+  command: "cargo build --release --bin zr-treesitter"
+  output: ../../target/release
+commands:
+  parse:
+    description: "Parse source code and return top-level declarations"
+    args:
+      source:
+        type: string
+        required: true
+      ext:
+        type: string
+        required: true
+      rel_path:
+        type: string
+        default: ""
+    output:
+      type: table
+      schema:
+        file: string
+        kind: string
+        name: string
+        signature: string

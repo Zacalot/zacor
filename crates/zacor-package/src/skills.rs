@@ -444,7 +444,7 @@ impl Feature {
             ("gemini", "grep") => Some("grep_search"),
             ("gemini", "glob") => Some("glob"),
             ("gemini", "write") => Some("write_file"),
-            ("gemini", "ask") => Some("ask_user"),
+            ("gemini", "ask") => None,
 
             ("codex", _) => None,
             _ => None,
@@ -546,10 +546,10 @@ pub fn generate(
 
 fn write_file(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        crate::io::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
-    std::fs::write(path, content)
+    crate::io::fs::write(path, content.as_bytes())
         .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
     Ok(())
 }

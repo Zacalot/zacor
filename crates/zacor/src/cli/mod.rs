@@ -9,12 +9,7 @@ mod remove;
 mod update;
 mod use_cmd;
 mod zacor;
-mod zr;
 
 pub fn run_zacor() -> i32 {
     zacor::run()
-}
-
-pub fn run_zr() -> i32 {
-    zr::run()
 }

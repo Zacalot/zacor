@@ -16,12 +16,14 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc as sync_mpsc;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
+use zacor_host::session::{ChannelTransport, StdioTransport, Transport};
 use zacor_package::protocol::{self as proto, Message};
 
 // ─── Stream adapters (avoids external dep) ───────────────────────────
@@ -78,8 +80,8 @@ struct AppState {
 }
 
 struct SessionHandle {
-    /// Module stdin writer
-    module_stdin: Arc<Mutex<BufWriter<std::process::ChildStdin>>>,
+    /// Capability responses routed back into the running protocol session.
+    respond_tx: sync_mpsc::Sender<Message>,
     /// Event receiver (taken once by the SSE handler)
     event_rx: Option<mpsc::Receiver<SsePayload>>,
     /// When this session was created
@@ -344,19 +346,13 @@ fn start_session(
         cmd_path, &body.args, has_input,
     ));
 
-    let stdin_writer = Arc::new(Mutex::new(BufWriter::new(child_stdin)));
-    {
-        let mut w = stdin_writer.blocking_lock();
-        let json_str = serde_json::to_string(&invoke_msg)?;
-        writeln!(w, "{}", json_str)?;
-        w.flush()?;
-    }
-
     let session_id = format!("{:016x}", rand_id());
     let (event_tx, event_rx) = mpsc::channel::<SsePayload>(256);
+    let (transport_tx, transport_rx) = sync_mpsc::channel::<Message>();
+    let (respond_tx, respond_rx) = sync_mpsc::channel::<Message>();
 
     let handle = SessionHandle {
-        module_stdin: stdin_writer,
+        respond_tx,
         event_rx: Some(event_rx),
         created_at: std::time::Instant::now(),
     };
@@ -370,31 +366,64 @@ fn start_session(
     let sessions = state.sessions.clone();
     let sid = session_id.clone();
     std::thread::Builder::new()
-        .name("protocol-reader".into())
+        .name("protocol-events".into())
+        .spawn(move || forward_session_events(transport_rx, event_tx))
+        .context("failed to spawn protocol event forwarder")?;
+
+    std::thread::Builder::new()
+        .name("protocol-session".into())
         .spawn(move || {
-            read_protocol_loop(child_stdout, event_tx);
+            let _ = serve_protocol_session(child_stdout, child_stdin, invoke_msg, transport_tx, respond_rx);
             let _ = child.wait();
             sessions.lock().unwrap().remove(&sid);
         })
-        .context("failed to spawn protocol reader")?;
+        .context("failed to spawn protocol session")?;
 
     Ok(session_id)
 }
 
-fn read_protocol_loop(stdout: std::process::ChildStdout, event_tx: mpsc::Sender<SsePayload>) {
-    let reader = BufReader::new(stdout);
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) if !l.is_empty() => l,
-            Ok(_) => continue,
-            Err(_) => break,
+fn serve_protocol_session(
+    stdout: std::process::ChildStdout,
+    stdin: std::process::ChildStdin,
+    invoke_msg: Message,
+    transport_tx: sync_mpsc::Sender<Message>,
+    respond_rx: sync_mpsc::Receiver<Message>,
+) -> Result<()> {
+    let mut module = StdioTransport::new(BufReader::new(stdout), stdin);
+    let mut channel = ChannelTransport::new(transport_tx, respond_rx);
+
+    module.send(&invoke_msg)?;
+
+    loop {
+        let Some(msg) = module.recv()? else {
+            break;
         };
 
-        let msg: Message = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
+        let is_done = matches!(msg, Message::Done(_));
+        let needs_response = matches!(msg, Message::CapabilityReq(_));
+        channel.send(&msg)?;
 
+        if needs_response {
+            match channel.recv()? {
+                Some(Message::CapabilityRes(res)) => module.send(&Message::CapabilityRes(res))?,
+                Some(other) => bail!("unexpected session response: {:?}", other),
+                None => break,
+            }
+        }
+
+        if is_done {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn forward_session_events(
+    transport_rx: sync_mpsc::Receiver<Message>,
+    event_tx: mpsc::Sender<SsePayload>,
+) {
+    while let Ok(msg) = transport_rx.recv() {
         let is_done = matches!(&msg, Message::Done(_));
         if event_tx.blocking_send(SsePayload::Message(msg)).is_err() {
             break;
@@ -470,10 +499,10 @@ async fn handle_session_respond(
     State(state): State<AppState>,
     Json(body): Json<RespondBody>,
 ) -> axum::response::Response {
-    let module_stdin = {
+    let respond_tx = {
         let sessions = state.sessions.lock().unwrap();
         match sessions.get(&session_id) {
-            Some(session) => session.module_stdin.clone(),
+            Some(session) => session.respond_tx.clone(),
             None => {
                 return (
                     axum::http::StatusCode::NOT_FOUND,
@@ -497,22 +526,10 @@ async fn handle_session_respond(
         result,
     });
 
-    let json_str = match serde_json::to_string(&res) {
-        Ok(j) => j,
-        Err(e) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response();
-        }
-    };
-
-    let mut w = module_stdin.lock().await;
-    if writeln!(w, "{}", json_str).is_err() || w.flush().is_err() {
+    if respond_tx.send(res).is_err() {
         return (
             axum::http::StatusCode::GONE,
-            Json(json!({"error": "module process ended"})),
+            Json(json!({"error": "session process ended"})),
         )
             .into_response();
     }

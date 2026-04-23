@@ -4,18 +4,63 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn zacor_bin() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_BIN_EXE_zacor"));
-    if !path.exists() {
-        path = PathBuf::from("target/debug/zacor").with_extension(std::env::consts::EXE_EXTENSION);
+    let zr = cargo_bin("zr");
+    unsafe {
+        std::env::set_var("ZR_BIN", &zr);
     }
-    path
+    cargo_bin("zacor")
 }
 
 fn zr_bin() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_BIN_EXE_zr"));
-    if !path.exists() {
-        path = PathBuf::from("target/debug/zr").with_extension(std::env::consts::EXE_EXTENSION);
+    cargo_bin("zr")
+}
+
+fn cargo_bin(name: &str) -> PathBuf {
+    if let Ok(path) = std::env::var(format!("CARGO_BIN_EXE_{name}")) {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return path;
+        }
     }
+
+    let workspace_root = workspace_root();
+    let mut path = workspace_root.join("target").join("debug").join(name);
+    path.set_extension(std::env::consts::EXE_EXTENSION);
+    if path.exists() {
+        return path;
+    }
+
+    let status = Command::new("cargo")
+        .args(["build", "-p", name, "--bin", name])
+        .current_dir(&workspace_root)
+        .status()
+        .expect("failed to build binary for integration test");
+    assert!(status.success(), "cargo build failed for binary {name}");
+    if path.exists() {
+        return path;
+    }
+
+    let deps = path.parent().unwrap().join("deps");
+    let mut candidates = fs::read_dir(&deps)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            candidate.extension().and_then(|ext| ext.to_str()) == Some(std::env::consts::EXE_EXTENSION)
+                && candidate
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem == name || stem.starts_with(&format!("{name}-")))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.into_iter().next().unwrap_or(path)
+}
+
+fn workspace_root() -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.pop();
+    path.pop();
     path
 }
 

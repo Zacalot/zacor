@@ -2,12 +2,15 @@
 default:
     @just --list
 
-# Install the CLI and packages as wasm (default). Some packages may
-# not yet port; build failures are skipped with a warning. Use a
-# single package argument to install just one (e.g. just install echo).
+# Install the host CLIs (`zacor`, fat `zr`, and `zred`) and packages
+# as wasm (default). Some packages may not yet port; build failures
+# are skipped with a warning. Use a single package argument to
+# install just one (e.g. just install echo).
 install *pkg:
     @if [ -z "{{pkg}}" ]; then \
         cargo install --path crates/zacor; \
+        cargo install --path crates/zr; \
+        cargo install --path crates/zred; \
         for p in packages/*/; do \
             name=$(basename "$p"); \
             if cargo build --release --target wasm32-wasip1 -p "zr-${name}" 2>/dev/null; then \
@@ -24,11 +27,14 @@ install *pkg:
         zacor install "target/wasm32-wasip1/release/{{pkg}}.wasm" --force; \
     fi
 
-# Install the CLI and all packages as native binaries (legacy path —
-# prefer `just install` for the wasm default).
+# Install the host CLIs (`zacor`, fat `zr`, and `zred`) and all
+# packages as native binaries (legacy path — prefer `just install`
+# for the wasm default).
 install-native *pkg:
     @if [ -z "{{pkg}}" ]; then \
         cargo install --path crates/zacor; \
+        cargo install --path crates/zr; \
+        cargo install --path crates/zred; \
         cargo build --release --workspace; \
         for p in packages/*/; do \
             zacor install "$p" --force; \
