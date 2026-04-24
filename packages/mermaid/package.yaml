@@ -1,4 +1,4 @@
-name: zr-mermaid
+name: mermaid
 version: "0.1.0"
 binary: zr-mermaid
 description: "Mermaid rendering package"

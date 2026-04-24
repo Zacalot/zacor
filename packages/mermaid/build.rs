@@ -1,6 +1,7 @@
 fn main() {
     use zacor_package_build::*;
-    PackageSpec::from_cargo("zr-mermaid")
+    PackageSpec::from_cargo("mermaid")
+        .binary("zr-mermaid")
         .command(
             CommandSpec::named("render")
                 .description("Render mermaid source to SVG")

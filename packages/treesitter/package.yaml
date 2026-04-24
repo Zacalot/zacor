@@ -1,4 +1,4 @@
-name: zr-treesitter
+name: treesitter
 version: "0.1.0"
 binary: zr-treesitter
 description: "Tree-sitter declaration extraction package"

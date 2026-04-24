@@ -1,0 +1,5 @@
+[env]
+WASI_SDK_PATH = { value = "wasi-sdk", relative = true }
+WASI_SYSROOT = { value = "wasi-sdk/share/wasi-sysroot", relative = true }
+CC_wasm32_wasip1 = { value = "scripts/wasi-clang.cmd", relative = true }
+AR_wasm32_wasip1 = { value = "wasi-sdk/bin/llvm-ar.exe", relative = true }

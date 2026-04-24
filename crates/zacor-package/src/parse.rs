@@ -1,4 +1,4 @@
-//! Code-parsing helpers backed by the installable `zr-treesitter` package.
+//! Code-parsing helpers backed by the installable `treesitter` package.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -22,7 +22,7 @@ pub fn tree_sitter(source: &str, ext: &str, rel_path: &str) -> io::Result<Vec<De
     args.insert("ext".to_string(), ext.to_string());
     args.insert("rel_path".to_string(), rel_path.to_string());
 
-    crate::invoke("zr-treesitter", "parse", &args)?
+    crate::invoke("treesitter", "parse", &args)?
         .map(|value| {
             serde_json::from_value(value).map_err(|e| {
                 io::Error::new(io::ErrorKind::InvalidData, format!("decl parse: {e}"))

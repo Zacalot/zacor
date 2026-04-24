@@ -407,6 +407,60 @@ pub struct ServiceConfig {
     pub health: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackageDependency {
+    pub name: &'static str,
+    pub version: Option<&'static str>,
+    pub source: Option<&'static str>,
+}
+
+impl PackageDependency {
+    pub fn named(name: &'static str) -> Self {
+        Self {
+            name,
+            version: None,
+            source: None,
+        }
+    }
+
+    pub fn version(mut self, version: &'static str) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    pub fn source(mut self, source: &'static str) -> Self {
+        self.source = Some(source);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BinaryDependency {
+    pub binary: &'static str,
+    pub check: Option<&'static str>,
+    pub install_hint: Option<&'static str>,
+}
+
+impl BinaryDependency {
+    pub fn named(binary: &'static str) -> Self {
+        Self {
+            binary,
+            check: None,
+            install_hint: None,
+        }
+    }
+
+    pub fn check(mut self, check: &'static str) -> Self {
+        self.check = Some(check);
+        self
+    }
+
+    pub fn install_hint(mut self, install_hint: &'static str) -> Self {
+        self.install_hint = Some(install_hint);
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageSpec {
     pub info: PackageInfo,
@@ -417,6 +471,8 @@ pub struct PackageSpec {
     pub commands: Vec<CommandSpec>,
     pub execution_default: Option<&'static str>,
     pub service: Option<ServiceConfig>,
+    pub package_depends: Vec<PackageDependency>,
+    pub binary_depends: Vec<BinaryDependency>,
     skills_config: Option<AiResourceConfig>,
     agents_config: Option<AiResourceConfig>,
 }
@@ -449,6 +505,8 @@ impl PackageSpec {
             commands: Vec::new(),
             execution_default: None,
             service: None,
+            package_depends: Vec::new(),
+            binary_depends: Vec::new(),
             skills_config: None,
             agents_config: None,
         }
@@ -468,6 +526,8 @@ impl PackageSpec {
             commands: Vec::new(),
             execution_default: None,
             service: None,
+            package_depends: Vec::new(),
+            binary_depends: Vec::new(),
             skills_config: None,
             agents_config: None,
         }
@@ -509,6 +569,16 @@ impl PackageSpec {
             port,
             health,
         });
+        self
+    }
+
+    pub fn depends_package(mut self, dependency: PackageDependency) -> Self {
+        self.package_depends.push(dependency);
+        self
+    }
+
+    pub fn depends_binary(mut self, dependency: BinaryDependency) -> Self {
+        self.binary_depends.push(dependency);
         self
     }
 
@@ -597,6 +667,34 @@ pub fn generate_package_yaml(spec: &PackageSpec) -> String {
 
     if spec.project_data {
         yaml.push_str("project-data: true\n");
+    }
+
+    if !spec.package_depends.is_empty() || !spec.binary_depends.is_empty() {
+        yaml.push_str("depends:\n");
+        if !spec.package_depends.is_empty() {
+            yaml.push_str("  packages:\n");
+            for dep in &spec.package_depends {
+                yaml.push_str(&format!("    - name: {}\n", dep.name));
+                if let Some(version) = dep.version {
+                    yaml.push_str(&format!("      version: \"{}\"\n", version));
+                }
+                if let Some(source) = dep.source {
+                    yaml.push_str(&format!("      source: \"{}\"\n", source));
+                }
+            }
+        }
+        if !spec.binary_depends.is_empty() {
+            yaml.push_str("  binaries:\n");
+            for dep in &spec.binary_depends {
+                yaml.push_str(&format!("    - binary: {}\n", dep.binary));
+                if let Some(check) = dep.check {
+                    yaml.push_str(&format!("      check: \"{}\"\n", check));
+                }
+                if let Some(install_hint) = dep.install_hint {
+                    yaml.push_str(&format!("      install_hint: \"{}\"\n", install_hint));
+                }
+            }
+        }
     }
 
     yaml.push_str("build:\n");
@@ -1576,6 +1674,66 @@ mod tests {
             .command(CommandSpec::implicit_default().description("Echo"));
         let yaml = generate_package_yaml(&spec);
         assert!(!yaml.contains("project-data"));
+    }
+
+    #[test]
+    fn test_depends_omitted_when_empty() {
+        let spec = PackageSpec::new("echo", "0.2.0")
+            .command(CommandSpec::implicit_default().description("Echo"));
+        let yaml = generate_package_yaml(&spec);
+        assert!(!yaml.contains("depends:\n"));
+    }
+
+    #[test]
+    fn test_package_depends_yaml() {
+        let spec = PackageSpec::new("wf", "0.1.0")
+            .depends_package(PackageDependency::named("mermaid"))
+            .depends_package(
+                PackageDependency::named("treesitter")
+                    .version("0.2.0")
+                    .source("file:///packages/treesitter"),
+            )
+            .command(CommandSpec::named("status").description("Show status"));
+        let yaml = generate_package_yaml(&spec);
+        assert!(yaml.contains("depends:\n"));
+        assert!(yaml.contains("  packages:\n"));
+        assert!(yaml.contains("    - name: mermaid\n"));
+        assert!(yaml.contains("    - name: treesitter\n"));
+        assert!(yaml.contains("      version: \"0.2.0\"\n"));
+        assert!(yaml.contains("      source: \"file:///packages/treesitter\"\n"));
+    }
+
+    #[test]
+    fn test_binary_depends_yaml() {
+        let spec = PackageSpec::new("video", "0.1.0")
+            .depends_binary(
+                BinaryDependency::named("ffmpeg")
+                    .check("ffmpeg -version")
+                    .install_hint("Install ffmpeg from https://ffmpeg.org"),
+            )
+            .command(CommandSpec::implicit_default().description("Render video"));
+        let yaml = generate_package_yaml(&spec);
+        assert!(yaml.contains("depends:\n"));
+        assert!(yaml.contains("  binaries:\n"));
+        assert!(yaml.contains("    - binary: ffmpeg\n"));
+        assert!(yaml.contains("      check: \"ffmpeg -version\"\n"));
+        assert!(yaml.contains("      install_hint: \"Install ffmpeg from https://ffmpeg.org\"\n"));
+    }
+
+    #[test]
+    fn test_embedded_manifest_preserves_depends() {
+        let out = tempfile::tempdir().unwrap();
+        let spec = PackageSpec::new("wf", "0.1.0")
+            .depends_package(PackageDependency::named("mermaid"))
+            .depends_binary(BinaryDependency::named("dot").check("dot -V"))
+            .command(CommandSpec::implicit_default().description("Render docs"));
+
+        generate_embedded_manifest(&spec, out.path().to_str().unwrap());
+
+        let yaml = std::fs::read_to_string(out.path().join("package_manifest.yaml")).unwrap();
+        assert!(yaml.contains("depends:\n"));
+        assert!(yaml.contains("  packages:\n    - name: mermaid\n"));
+        assert!(yaml.contains("  binaries:\n    - binary: dot\n      check: \"dot -V\"\n"));
     }
 
     #[test]

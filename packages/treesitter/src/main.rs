@@ -2,7 +2,7 @@ zacor_package::include_manifest!();
 
 fn main() {
     std::process::exit(zacor_package::protocol(
-        "zr-treesitter",
+        "treesitter",
         |ctx| -> Result<i32, String> {
             match ctx.command() {
                 "parse" => {

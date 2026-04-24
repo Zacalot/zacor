@@ -1,6 +1,7 @@
 fn main() {
     use zacor_package_build::*;
-    PackageSpec::from_cargo("zr-treesitter")
+    PackageSpec::from_cargo("treesitter")
+        .binary("zr-treesitter")
         .command(
             CommandSpec::named("parse")
                 .description("Parse source code and return top-level declarations")
