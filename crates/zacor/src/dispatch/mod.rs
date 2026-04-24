@@ -243,6 +243,23 @@ fn execute_service(
 
 const DEFAULT_MAX_CALL_DEPTH: usize = 8;
 
+fn validate_command_input_mode_for_stdin(
+    command: &CommandDefinition,
+    stdin_is_terminal: bool,
+) -> Result<()> {
+    if command.input.is_some() && command.inline_input_fallback.is_none() && stdin_is_terminal {
+        bail!(
+            "this command requires piped stdin; provide input via a pipe or file-backed stdin"
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_command_input_mode(command: &CommandDefinition) -> Result<()> {
+    validate_command_input_mode_for_stdin(command, std::io::stdin().is_terminal())
+}
+
 struct LocalPackageRouter<'a> {
     home: &'a Path,
     capabilities: &'a CapabilityRegistry,
@@ -561,6 +578,7 @@ fn invoke_package_local(
 ) -> Result<i32> {
     let resolved = resolve(home, package)?;
     let command = find_command(&resolved.definition.commands, command_path)?;
+    validate_command_input_mode(command)?;
     let (env_vars, placeholders) = build_invocation_env(home, &resolved, command_path, parsed_flags)?;
 
     if resolved.definition.wasm.is_some() {
@@ -1035,6 +1053,7 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
 
     // Find the command definition
     let command = find_command(&resolved.definition.commands, &command_path)?;
+    validate_command_input_mode(command)?;
 
     // Discover project root
     let cwd = std::env::current_dir().ok();
@@ -1091,7 +1110,7 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::package_definition::OutputType;
+    use crate::package_definition::{InlineInputFallback, InputType, OutputType};
     use crate::test_util;
 
     #[test]
@@ -1346,5 +1365,27 @@ commands:
             "got: {}",
             msg
         );
+    }
+
+    #[test]
+    fn test_validate_command_input_mode_rejects_interactive_stdin_without_fallback() {
+        let command = CommandDefinition {
+            input: Some(InputType::Jsonl),
+            ..Default::default()
+        };
+
+        let err = validate_command_input_mode_for_stdin(&command, true).unwrap_err();
+        assert!(err.to_string().contains("requires piped stdin"));
+    }
+
+    #[test]
+    fn test_validate_command_input_mode_allows_interactive_stdin_with_fallback() {
+        let command = CommandDefinition {
+            input: Some(InputType::Jsonl),
+            inline_input_fallback: Some(InlineInputFallback::StringValue),
+            ..Default::default()
+        };
+
+        validate_command_input_mode_for_stdin(&command, true).unwrap();
     }
 }

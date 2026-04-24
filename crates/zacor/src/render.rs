@@ -161,6 +161,63 @@ fn make_table() -> Table {
     table
 }
 
+fn inferred_object_fields(records: &[Value]) -> Vec<String> {
+    let mut fields = Vec::new();
+    for record in records {
+        if let Some(obj) = record.as_object() {
+            for key in obj.keys() {
+                if !fields.contains(key) {
+                    fields.push(key.clone());
+                }
+            }
+        }
+    }
+    fields
+}
+
+fn render_inferred_table(records: &[Value], writer: &mut impl Write) {
+    if records.is_empty() {
+        return;
+    }
+
+    if records.len() == 1 {
+        render_record(&records[0], &OutputDeclaration {
+            output_type: Some(OutputType::Record),
+            cardinality: None,
+            display: None,
+            field: None,
+            stream: false,
+            schema: None,
+        }, writer);
+        return;
+    }
+
+    let fields = inferred_object_fields(records);
+    if fields.is_empty() {
+        for record in records {
+            let _ = writeln!(writer, "{}", value_to_string(record));
+        }
+        return;
+    }
+
+    let mut table = make_table();
+    let headers: Vec<String> = fields.iter().map(|field| field.to_uppercase()).collect();
+    table.set_header(&headers);
+
+    for record in records {
+        let row: Vec<String> = match record.as_object() {
+            Some(obj) => fields
+                .iter()
+                .map(|field| obj.get(field).map(value_to_string).unwrap_or_default())
+                .collect(),
+            None => vec![value_to_string(record)],
+        };
+        table.add_row(&row);
+    }
+
+    let _ = writeln!(writer, "{}", table);
+}
+
 pub fn render_record(record: &Value, output: &OutputDeclaration, writer: &mut impl Write) {
     let fields = get_schema_fields(output);
 
@@ -191,6 +248,7 @@ pub fn render_table(records: &[Value], output: &OutputDeclaration, writer: &mut 
 
     let fields = get_schema_fields(output);
     if fields.is_empty() {
+        render_inferred_table(records, writer);
         return;
     }
 
@@ -600,6 +658,41 @@ mod tests {
         let mut buf = Vec::new();
         render_table(&[], &output, &mut buf);
         assert_eq!(String::from_utf8(buf).unwrap(), "");
+    }
+
+    #[test]
+    fn test_render_table_without_schema_single_record_falls_back_to_record() {
+        let output = make_output(OutputType::Table, None, false, vec![]);
+        let records = vec![serde_json::json!({"value": "Hi"})];
+        let mut buf = Vec::new();
+        render_table(&records, &output, &mut buf);
+        let result = String::from_utf8(buf).unwrap();
+        assert!(result.contains("value"), "got: {}", result);
+        assert!(result.contains("Hi"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_render_table_without_schema_multiple_records_infers_columns() {
+        let output = make_output(OutputType::Table, None, false, vec![]);
+        let records = vec![
+            serde_json::json!({"value": "Hi", "lang": "en"}),
+            serde_json::json!({"value": "Salut", "lang": "fr"}),
+        ];
+        let mut buf = Vec::new();
+        render_table(&records, &output, &mut buf);
+        let result = String::from_utf8(buf).unwrap();
+        assert!(result.contains("VALUE"), "got: {}", result);
+        assert!(result.contains("LANG"), "got: {}", result);
+        assert!(result.contains("Salut"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_render_table_without_schema_scalar_records_print_values() {
+        let output = make_output(OutputType::Table, None, false, vec![]);
+        let records = vec![serde_json::json!("Hi"), serde_json::json!("There")];
+        let mut buf = Vec::new();
+        render_table(&records, &output, &mut buf);
+        assert_eq!(String::from_utf8(buf).unwrap(), "Hi\nThere\n");
     }
 
     // ─── render_jsonl integration tests ─────────────────────────────

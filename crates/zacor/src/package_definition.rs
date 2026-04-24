@@ -49,8 +49,16 @@ pub struct CommandDefinition {
     pub commands: BTreeMap<String, CommandDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<InputType>,
+    #[serde(rename = "inline-input-fallback", default, skip_serializing_if = "Option::is_none")]
+    pub inline_input_fallback: Option<InlineInputFallback>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<OutputDeclaration>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum InlineInputFallback {
+    StringValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -705,6 +713,24 @@ commands:
       type: invalid
 "#;
         assert!(parse(yaml).is_err());
+    }
+
+    #[test]
+    fn test_inline_input_fallback_parses() {
+        let yaml = r#"
+name: str
+version: "0.1.0"
+commands:
+  capitalize:
+    input: jsonl
+    inline-input-fallback: string-value
+"#;
+        let def = parse(yaml).unwrap();
+        let cmd = &def.commands["capitalize"];
+        assert_eq!(
+            cmd.inline_input_fallback,
+            Some(InlineInputFallback::StringValue)
+        );
     }
 
     #[test]

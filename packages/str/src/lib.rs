@@ -4,14 +4,41 @@ use std::io::BufRead;
 
 zacor_package::include_args!();
 
+fn resolve_transform_input(
+    value: Option<&str>,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<(String, Option<Box<dyn BufRead>>), String> {
+    if input.is_some() {
+        return Ok(("value".to_string(), input));
+    }
+
+    let value = value.ok_or("str: requires piped input or an inline value")?;
+
+    Ok((
+        "value".to_string(),
+        Some(Box::new(std::io::Cursor::new(
+            format!("{}\n", json!({"value": value})).into_bytes(),
+        ))),
+    ))
+}
+
+fn resolve_fields(fields: Option<&str>) -> String {
+    fields.unwrap_or("value").to_string()
+}
+
 fn transform_fields(
-    fields: &str,
+    value: Option<&str>,
+    fields: Option<&str>,
     input: Option<Box<dyn BufRead>>,
     transform: impl Fn(&Value) -> Value,
 ) -> Result<Vec<Value>, String> {
+    let (default_fields, input) = resolve_transform_input(value, input)?;
+    let fields = fields
+        .map(|value| value.to_string())
+        .unwrap_or(default_fields);
     let reader = input.ok_or("str: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
-    let field_list = zacor_package::parse_field_list(fields);
+    let field_list = zacor_package::parse_field_list(&fields);
 
     let output: Vec<Value> = records.into_iter().map(|record| {
         if let Value::Object(mut map) = record {
@@ -35,7 +62,7 @@ pub fn cmd_trim(args: &args::TrimArgs, input: Option<Box<dyn BufRead>>) -> Resul
     let left = args.left;
     let right = args.right;
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let result = if let Some(ref ch) = char_to_trim {
                 let c: Vec<char> = ch.chars().collect();
@@ -73,7 +100,7 @@ pub fn cmd_replace(args: &args::ReplaceArgs, input: Option<Box<dyn BufRead>>) ->
         None
     };
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let result = if let Some(ref re) = re {
                 if all {
@@ -94,19 +121,19 @@ pub fn cmd_replace(args: &args::ReplaceArgs, input: Option<Box<dyn BufRead>>) ->
 }
 
 pub fn cmd_upcase(args: &args::UpcaseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v { Value::String(s.to_uppercase()) } else { v.clone() }
     })
 }
 
 pub fn cmd_downcase(args: &args::DowncaseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v { Value::String(s.to_lowercase()) } else { v.clone() }
     })
 }
 
 pub fn cmd_capitalize(args: &args::CapitalizeArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let mut chars = s.chars();
             let result = match chars.next() {
@@ -121,7 +148,7 @@ pub fn cmd_capitalize(args: &args::CapitalizeArgs, input: Option<Box<dyn BufRead
 }
 
 pub fn cmd_reverse(args: &args::ReverseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v { Value::String(s.chars().rev().collect()) } else { v.clone() }
     })
 }
@@ -132,7 +159,7 @@ pub fn cmd_substring(args: &args::SubstringArgs, input: Option<Box<dyn BufRead>>
     let start: usize = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
     let end: Option<usize> = parts.get(1).and_then(|s| s.parse().ok());
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let chars: Vec<char> = s.chars().collect();
             let end_idx = end.unwrap_or(chars.len()).min(chars.len());
@@ -149,7 +176,7 @@ pub fn cmd_contains(args: &args::ContainsArgs, input: Option<Box<dyn BufRead>>) 
     let term = args.term.clone();
     let ignore_case = args.ignore_case;
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let result = if ignore_case {
                 s.to_lowercase().contains(&term.to_lowercase())
@@ -167,7 +194,7 @@ pub fn cmd_starts_with(args: &args::StartsWithArgs, input: Option<Box<dyn BufRea
     let term = args.term.clone();
     let ignore_case = args.ignore_case;
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let result = if ignore_case {
                 s.to_lowercase().starts_with(&term.to_lowercase())
@@ -185,7 +212,7 @@ pub fn cmd_ends_with(args: &args::EndsWithArgs, input: Option<Box<dyn BufRead>>)
     let term = args.term.clone();
     let ignore_case = args.ignore_case;
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let result = if ignore_case {
                 s.to_lowercase().ends_with(&term.to_lowercase())
@@ -200,7 +227,7 @@ pub fn cmd_ends_with(args: &args::EndsWithArgs, input: Option<Box<dyn BufRead>>)
 }
 
 pub fn cmd_length(args: &args::LengthArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v { json!(s.len()) } else { v.clone() }
     })
 }
@@ -209,7 +236,7 @@ pub fn cmd_index_of(args: &args::IndexOfArgs, input: Option<Box<dyn BufRead>>) -
     let term = args.term.clone();
     let from_end = args.end;
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let idx = if from_end {
                 s.rfind(&term).map(|i| i as i64).unwrap_or(-1)
@@ -233,7 +260,7 @@ pub fn cmd_split(args: &args::SplitArgs, input: Option<Box<dyn BufRead>>) -> Res
         None
     };
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let parts: Vec<Value> = if let Some(ref re) = re {
                 re.split(s).map(|p| json!(p)).collect()
@@ -250,7 +277,7 @@ pub fn cmd_split(args: &args::SplitArgs, input: Option<Box<dyn BufRead>>) -> Res
 pub fn cmd_join(args: &args::JoinArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
     let separator = args.separator.clone();
 
-    transform_fields(&args.fields, input, |v| {
+    transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::Array(arr) = v {
             let parts: Vec<String> = arr.iter().map(|item| {
                 match item {
@@ -268,7 +295,8 @@ pub fn cmd_join(args: &args::JoinArgs, input: Option<Box<dyn BufRead>>) -> Resul
 pub fn cmd_parse(args: &args::ParseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
     let reader = input.ok_or("str parse: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
-    let field_list = zacor_package::parse_field_list(&args.fields);
+    let fields = resolve_fields(args.fields.as_deref());
+    let field_list = zacor_package::parse_field_list(&fields);
 
     let re = if args.regex {
         Regex::new(&args.pattern).map_err(|e| format!("str parse: invalid regex: {e}"))?
@@ -345,6 +373,29 @@ mod tests {
 
     fn json_input(s: &str) -> Option<Box<dyn BufRead>> {
         Some(Box::new(Cursor::new(s.to_string().into_bytes())))
+    }
+
+    #[test]
+    fn inline_scalar_uses_value_field() {
+        let args: args::CapitalizeArgs = make_args(&[("value", json!("hello world"))]);
+        let result = cmd_capitalize(&args, None).unwrap();
+        assert_eq!(result, vec![json!({"value": "Hello world"})]);
+    }
+
+    #[test]
+    fn piped_input_defaults_to_value_field() {
+        let data = r#"[{"value":"hello"}]"#;
+        let args: args::CapitalizeArgs = make_args(&[]);
+        let result = cmd_capitalize(&args, json_input(data)).unwrap();
+        assert_eq!(result[0]["value"], "Hello");
+    }
+
+    #[test]
+    fn explicit_fields_override_default_value_field() {
+        let data = r#"[{"name":"hello"}]"#;
+        let args: args::CapitalizeArgs = make_args(&[("fields", json!("name"))]);
+        let result = cmd_capitalize(&args, json_input(data)).unwrap();
+        assert_eq!(result[0]["name"], "Hello");
     }
 
     #[test]

@@ -10,9 +10,11 @@ commands:
   trim:
     description: "Trim whitespace or characters"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       char:
         type: string
       left:
@@ -22,14 +24,17 @@ commands:
         type: bool
         flag: right
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   replace:
     description: "Replace text in fields"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       find:
         type: string
         required: true
@@ -43,62 +48,80 @@ commands:
         type: bool
         flag: regex
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   upcase:
     description: "Convert to uppercase"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   downcase:
     description: "Convert to lowercase"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   capitalize:
     description: "Capitalize first letter"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   reverse:
     description: "Reverse string"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   substring:
     description: "Extract substring"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       range:
         type: string
         required: true
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   contains:
     description: "Test if field contains string"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       term:
         type: string
         required: true
@@ -106,14 +129,17 @@ commands:
         type: bool
         flag: ignore-case
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   starts-with:
     description: "Test if field starts with string"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       term:
         type: string
         required: true
@@ -121,14 +147,17 @@ commands:
         type: bool
         flag: ignore-case
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   ends-with:
     description: "Test if field ends with string"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       term:
         type: string
         required: true
@@ -136,23 +165,29 @@ commands:
         type: bool
         flag: ignore-case
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   length:
     description: "Get string length"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   index-of:
     description: "Find index of substring"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       term:
         type: string
         required: true
@@ -160,14 +195,17 @@ commands:
         type: bool
         flag: end
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   split:
     description: "Split string by separator"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       separator:
         type: string
         required: true
@@ -175,26 +213,32 @@ commands:
         type: bool
         flag: regex
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   join:
     description: "Join array into string"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       separator:
         type: string
         required: true
     input: jsonl
+    inline-input-fallback: string-value
     output:
       type: table
   parse:
     description: "Parse string with pattern"
     args:
+      value:
+        type: string
       fields:
         type: string
-        required: true
+        flag: fields
       pattern:
         type: string
         required: true

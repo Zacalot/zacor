@@ -314,12 +314,26 @@ impl InputKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InlineInputFallbackKind {
+    StringValue,
+}
+
+impl InlineInputFallbackKind {
+    fn as_yaml(self) -> &'static str {
+        match self {
+            Self::StringValue => "string-value",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
     pub name: Option<&'static str>,
     pub description: Option<&'static str>,
     pub args: Vec<ArgSchemaInfo>,
     pub input: Option<InputKind>,
+    pub inline_input_fallback: Option<InlineInputFallbackKind>,
     pub output: Option<OutputSpec>,
     pub subcommands: Vec<CommandSpec>,
 }
@@ -331,6 +345,7 @@ impl CommandSpec {
             description: None,
             args: Vec::new(),
             input: None,
+            inline_input_fallback: None,
             output: None,
             subcommands: Vec::new(),
         }
@@ -342,6 +357,7 @@ impl CommandSpec {
             description: None,
             args: Vec::new(),
             input: None,
+            inline_input_fallback: None,
             output: None,
             subcommands: Vec::new(),
         }
@@ -359,6 +375,11 @@ impl CommandSpec {
 
     pub fn input(mut self, input: InputKind) -> Self {
         self.input = Some(input);
+        self
+    }
+
+    pub fn inline_input_fallback(mut self, fallback: InlineInputFallbackKind) -> Self {
+        self.inline_input_fallback = Some(fallback);
         self
     }
 
@@ -388,6 +409,7 @@ impl Default for CommandSpec {
             description: None,
             args: Vec::new(),
             input: None,
+            inline_input_fallback: None,
             output: None,
             subcommands: Vec::new(),
         }
@@ -780,6 +802,12 @@ fn write_command_yaml(yaml: &mut String, name: &str, command: &CommandSpec, dept
 
     if let Some(input) = command.input {
         yaml.push_str(&format!("{inner}input: {}\n", input.as_yaml()));
+    }
+    if let Some(fallback) = command.inline_input_fallback {
+        yaml.push_str(&format!(
+            "{inner}inline-input-fallback: {}\n",
+            fallback.as_yaml()
+        ));
     }
     if let Some(output) = &command.output {
         let kind = output.resolved_kind();

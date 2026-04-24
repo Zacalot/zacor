@@ -1,6 +1,7 @@
 use crate::error::*;
-use crate::package_definition::{CommandDefinition, OutputDeclaration, PackageDefinition};
+use crate::package_definition::{CommandDefinition, InlineInputFallback, OutputDeclaration, PackageDefinition};
 use crate::render::RenderMode;
+use serde_json::json;
 use std::io::{BufRead, BufWriter, IsTerminal, StdoutLock, Write};
 use serde_json::Value;
 use zacor_host::capability::CapabilityRegistry;
@@ -130,6 +131,30 @@ impl StdinInputSource {
     }
 }
 
+struct InlineInputSource {
+    chunk: Option<String>,
+}
+
+impl InlineInputSource {
+    fn from_invoke_args(invoke_msg: &Message, fallback: InlineInputFallback) -> Option<Self> {
+        let Message::Invoke(invoke) = invoke_msg else {
+            return None;
+        };
+
+        match fallback {
+            InlineInputFallback::StringValue => invoke.args.get("value").map(|value| Self {
+                chunk: Some(format!("{}\n", json!({"value": value}))),
+            }),
+        }
+    }
+}
+
+impl InputSource for InlineInputSource {
+    fn next_chunk(&mut self) -> Option<String> {
+        self.chunk.take()
+    }
+}
+
 impl InputSource for StdinInputSource {
     fn next_chunk(&mut self) -> Option<String> {
         self.line.clear();
@@ -220,8 +245,21 @@ pub(crate) fn run_protocol_session(
     max_depth: usize,
 ) -> Result<i32> {
     let mut output_handler = RenderingOutputHandler::new(output_mode, command);
-    let mut input_source = matches!(invoke_msg, Message::Invoke(inv) if inv.input)
-        .then(StdinInputSource::new);
+    let mut inline_input_source = command
+        .inline_input_fallback
+        .and_then(|fallback| InlineInputSource::from_invoke_args(invoke_msg, fallback));
+    let mut stdin_input_source = (command.input.is_some()
+        && inline_input_source.is_none()
+        && !std::io::stdin().is_terminal())
+    .then(StdinInputSource::new);
+    let input_source = inline_input_source
+        .as_mut()
+        .map(|source| source as &mut dyn InputSource)
+        .or_else(|| {
+            stdin_input_source
+                .as_mut()
+                .map(|source| source as &mut dyn InputSource)
+        });
 
     run_protocol_session_with_handler(
         reader,
@@ -233,9 +271,7 @@ pub(crate) fn run_protocol_session(
         capabilities,
         package_router,
         &mut output_handler,
-        input_source
-            .as_mut()
-            .map(|source| source as &mut dyn InputSource),
+        input_source,
         depth,
         max_depth,
     )

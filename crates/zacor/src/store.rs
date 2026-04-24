@@ -20,6 +20,9 @@ pub fn put(home: &Path, name: &str, version: &str, content_dir: &Path) -> Result
     }
 
     let dir = paths::store_path(home, name, version);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).context("failed to replace existing store directory")?;
+    }
     fs::create_dir_all(&dir).context("failed to create store directory")?;
 
     copy_dir_contents(content_dir, &dir)?;
@@ -151,6 +154,26 @@ mod tests {
         assert!(store.join("package.yaml").exists());
         assert!(store.join("main.py").exists());
         assert!(store.join("lib").join("utils.py").exists());
+    }
+
+    #[test]
+    fn test_put_replaces_existing_same_version_directory() {
+        let home = test_util::temp_home("store");
+        let initial = create_content_dir(
+            "name: testmod\nversion: \"1.0.0\"\ncommands:\n  default:\n    description: test\n",
+        );
+        fs::write(initial.path().join("stale.txt"), "old").unwrap();
+        put(home.path(), "testmod", "1.0.0", initial.path()).unwrap();
+
+        let replacement = create_content_dir(
+            "name: testmod\nversion: \"1.0.0\"\ncommands:\n  default:\n    description: updated\n",
+        );
+        put(home.path(), "testmod", "1.0.0", replacement.path()).unwrap();
+
+        let store = paths::store_path(home.path(), "testmod", "1.0.0");
+        assert!(!store.join("stale.txt").exists());
+        let yaml = fs::read_to_string(store.join("package.yaml")).unwrap();
+        assert!(yaml.contains("updated"), "got: {}", yaml);
     }
 
     #[test]

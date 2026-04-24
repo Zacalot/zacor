@@ -32,10 +32,12 @@ pub fn install_definition(path: &Path) -> Result<AcquireResult> {
 }
 
 /// Install a wasm package from a bare `.wasm` file. The manifest is
-/// embedded in the wasm's `zacor_manifest` custom section — no sidecar
-/// yaml expected or written. The wasm file is copied into the content
-/// directory under its original filename, which is what `store::put`
-/// and later `wasm_manifest::find_wasm_in_store` key off of.
+/// embedded in the wasm's `zacor_manifest` custom section and is also
+/// written to a sidecar `package.yaml` in the content directory so the
+/// installed store entry stays inspectable and consistent. The wasm file
+/// is copied into the content directory under its original filename,
+/// which is what `store::put` and later `wasm_manifest::find_wasm_in_store`
+/// key off of.
 pub fn install_wasm(path: &Path) -> Result<AcquireResult> {
     if !path.exists() {
         bail!("file not found: {}", path.display());
@@ -66,6 +68,11 @@ pub fn install_wasm(path: &Path) -> Result<AcquireResult> {
     let content_dir = tempfile::tempdir().context("failed to create content dir")?;
     let dest_wasm = content_dir.path().join(file_name);
     fs::copy(path, &dest_wasm).context("failed to copy wasm artifact")?;
+
+    if let Some(bytes) = crate::wasm_manifest::read_manifest_bytes(path)? {
+        fs::write(content_dir.path().join("package.yaml"), &bytes)
+            .context("failed to write embedded package manifest")?;
+    }
 
     // Best-effort AOT precompile: write `.cwasm` sibling so dispatch
     // can `Module::deserialize_file` instead of cranelift-compiling the
@@ -150,6 +157,10 @@ fn install_wasm_artifact(
     let content_dir = tempfile::tempdir().context("failed to create content dir")?;
     let dest_wasm = content_dir.path().join(file_name);
     fs::copy(wasm_path, &dest_wasm).context("failed to copy wasm artifact")?;
+    if let Some(bytes) = crate::wasm_manifest::read_manifest_bytes(wasm_path)? {
+        fs::write(content_dir.path().join("package.yaml"), &bytes)
+            .context("failed to write embedded package manifest")?;
+    }
 
     if let Ok(host) = crate::wasm_runtime::WasmHost::shared()
         && let Err(e) = host.precompile(&dest_wasm)
@@ -442,6 +453,17 @@ pub fn extract_zip(archive_path: &Path, dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn echo_wasm_path() -> Option<std::path::PathBuf> {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent()?.parent()?;
+        let path = workspace_root
+            .join("target")
+            .join("wasm32-wasip1")
+            .join("release")
+            .join("echo.wasm");
+        path.exists().then_some(path)
+    }
+
     #[test]
     fn test_install_definition_not_found() {
         let result = install_definition(Path::new("/nonexistent/package.yaml"));
@@ -515,5 +537,19 @@ mod tests {
         assert!(content.join("package.yaml").exists());
         assert!(content.join("main.py").exists());
         assert!(content.join("lib").join("utils.py").exists());
+    }
+
+    #[test]
+    fn test_install_wasm_artifact_writes_sidecar_manifest() {
+        let Some(wasm_path) = echo_wasm_path() else {
+            eprintln!("skipping: build zr-echo for wasm32-wasip1 first");
+            return;
+        };
+
+        let result = install_wasm(&wasm_path).unwrap();
+        let yaml_path = result.content_dir.path().join("package.yaml");
+        assert!(yaml_path.exists());
+        let yaml = fs::read_to_string(yaml_path).unwrap();
+        assert!(yaml.contains("name: echo"), "got: {}", yaml);
     }
 }
