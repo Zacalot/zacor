@@ -8,21 +8,18 @@ pub use zacor_host::{
 #[cfg(test)]
 pub use zacor_host::test_util;
 
-#[path = "../../zr/src/daemon_client.rs"]
 mod daemon_client;
-#[path = "../../zacor/src/dispatch/mod.rs"]
 mod dispatch;
-#[path = "../../zacor/src/execute.rs"]
 mod execute;
 #[cfg(windows)]
-#[path = "../../zacor/src/job_object.rs"]
 mod job_object;
-#[path = "../../zr/src/providers/mod.rs"]
 mod providers;
-#[path = "../../zacor/src/render.rs"]
 mod render;
 
-pub use dispatch::{OutputMode, build_clap_command, invoke_local, run};
+pub use dispatch::{
+    InvocationEvent, InvocationMessageLevel, OutputMode, build_clap_command, invoke_local,
+    invoke_local_with_events, run,
+};
 
 pub(crate) fn resolve_peer_binary(name: &str) -> std::path::PathBuf {
     let env_name = format!("CARGO_BIN_EXE_{name}");

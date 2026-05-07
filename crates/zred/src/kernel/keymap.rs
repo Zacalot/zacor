@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -43,15 +42,12 @@ impl KeyChord {
         Self { code, modifiers }
     }
 
-    pub fn from_event(event: KeyEvent) -> Option<Self> {
-        let modifiers = KeyModifiersRepr::from_crossterm(event.modifiers);
-        match event.code {
-            KeyCode::Char(ch) => Some(Self::new(KeyCodeRepr::Char(ch), modifiers)),
-            KeyCode::Enter => Some(Self::new(KeyCodeRepr::Enter, modifiers)),
-            KeyCode::Esc => Some(Self::new(KeyCodeRepr::Esc, modifiers)),
-            KeyCode::Backspace => Some(Self::new(KeyCodeRepr::Backspace, modifiers)),
-            _ => None,
-        }
+    pub fn code(&self) -> KeyCodeRepr {
+        self.code
+    }
+
+    pub fn modifiers(&self) -> KeyModifiersRepr {
+        self.modifiers
     }
 }
 
@@ -71,6 +67,14 @@ pub struct KeyModifiersRepr {
 }
 
 impl KeyModifiersRepr {
+    pub const fn new(control: bool, shift: bool, alt: bool) -> Self {
+        Self {
+            control,
+            shift,
+            alt,
+        }
+    }
+
     pub const NONE: Self = Self {
         control: false,
         shift: false,
@@ -83,12 +87,8 @@ impl KeyModifiersRepr {
         alt: false,
     };
 
-    pub fn from_crossterm(modifiers: KeyModifiers) -> Self {
-        Self {
-            control: modifiers.contains(KeyModifiers::CONTROL),
-            shift: modifiers.contains(KeyModifiers::SHIFT),
-            alt: modifiers.contains(KeyModifiers::ALT),
-        }
+    pub fn control(&self) -> bool {
+        self.control
     }
 }
 

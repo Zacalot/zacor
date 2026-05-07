@@ -36,6 +36,11 @@ impl Workspace {
             return false;
         };
         job.set_status(status);
+        self.refresh_jobs_buffer_if_present();
         true
+    }
+
+    pub fn cancel_job(&mut self, job_id: JobId) -> bool {
+        self.set_job_status(job_id, JobStatus::Cancelled)
     }
 }

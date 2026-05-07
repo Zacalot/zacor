@@ -51,4 +51,7 @@ pub use pane_tree::{PaneDirection, PaneNode, PaneTree, SplitAxis};
 pub use selection::{
     RecordSelection, Selection, SurfaceSelection, TextRange, TextSelection, TreeSelection,
 };
-pub use workspace::Workspace;
+#[allow(unused_imports)]
+pub use workspace::{
+    BufferSnapshot, PaneSnapshot, Workspace, WorkspaceRestoreError, WorkspaceSnapshot,
+};

@@ -1,140 +1,150 @@
-use crate::kernel::{KeyChord, KeymapLookup, MinibufferMode};
-use crate::session::{Session, SessionLuaRuntime, SessionPackageRuntime, SharedSession};
+use crate::kernel::{KeyChord, KeyCodeRepr, KeyModifiersRepr};
+use crate::session::AppInputEvent;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::cell::Ref;
 
-enum ResolvedKeymapLookup {
-    Matched(String),
-    Pending,
-    NoMatch,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TuiKeyEvent {
+    code: TuiKeyCode,
+    modifiers: TuiKeyModifiers,
 }
 
-pub struct TuiInputController {
-    state: SharedSession,
-    pending_key_sequence: Vec<KeyChord>,
-}
-
-impl TuiInputController {
-    pub fn new(state: SharedSession) -> Self {
+impl From<KeyEvent> for TuiKeyEvent {
+    fn from(value: KeyEvent) -> Self {
         Self {
-            state,
-            pending_key_sequence: Vec::new(),
+            code: match value.code {
+                KeyCode::Backspace => TuiKeyCode::Backspace,
+                KeyCode::Enter => TuiKeyCode::Enter,
+                KeyCode::Esc => TuiKeyCode::Esc,
+                KeyCode::Char(ch) => TuiKeyCode::Char(ch),
+                _ => TuiKeyCode::Unsupported,
+            },
+            modifiers: TuiKeyModifiers {
+                control: value.modifiers.contains(KeyModifiers::CONTROL),
+                shift: value.modifiers.contains(KeyModifiers::SHIFT),
+                alt: value.modifiers.contains(KeyModifiers::ALT),
+            },
         }
     }
+}
 
-    pub fn state(&self) -> Ref<'_, Session> {
-        Session::borrow(&self.state)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TuiKeyCode {
+    Backspace,
+    Enter,
+    Esc,
+    Char(char),
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TuiKeyModifiers {
+    control: bool,
+    shift: bool,
+    alt: bool,
+}
+
+pub fn key_chord_from_event(event: TuiKeyEvent) -> Option<KeyChord> {
+    match event.code {
+        TuiKeyCode::Char(ch) => Some(KeyChord::new(
+            KeyCodeRepr::Char(ch),
+            printable_modifiers(event.modifiers),
+        )),
+        TuiKeyCode::Enter => Some(KeyChord::new(
+            KeyCodeRepr::Enter,
+            non_printable_modifiers(event.modifiers),
+        )),
+        TuiKeyCode::Esc => Some(KeyChord::new(
+            KeyCodeRepr::Esc,
+            non_printable_modifiers(event.modifiers),
+        )),
+        TuiKeyCode::Backspace => Some(KeyChord::new(
+            KeyCodeRepr::Backspace,
+            non_printable_modifiers(event.modifiers),
+        )),
+        _ => None,
+    }
+}
+
+fn printable_modifiers(modifiers: TuiKeyModifiers) -> KeyModifiersRepr {
+    KeyModifiersRepr::new(modifiers.control, false, modifiers.alt)
+}
+
+fn non_printable_modifiers(modifiers: TuiKeyModifiers) -> KeyModifiersRepr {
+    KeyModifiersRepr::new(modifiers.control, modifiers.shift, modifiers.alt)
+}
+
+pub fn text_input_from_event(event: TuiKeyEvent) -> Option<char> {
+    match event.code {
+        TuiKeyCode::Char(ch) if !event.modifiers.control => Some(ch),
+        _ => None,
+    }
+}
+
+pub fn app_input_event_from_tui(event: TuiKeyEvent) -> AppInputEvent {
+    AppInputEvent::new(key_chord_from_event(event), text_input_from_event(event))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn printable_character_chords_ignore_shift() {
+        let chord = key_chord_from_event(TuiKeyEvent {
+            code: TuiKeyCode::Char(':'),
+            modifiers: TuiKeyModifiers {
+                control: false,
+                shift: true,
+                alt: false,
+            },
+        });
+
+        assert_eq!(
+            chord,
+            Some(KeyChord::new(
+                KeyCodeRepr::Char(':'),
+                KeyModifiersRepr::NONE
+            ))
+        );
     }
 
-    pub fn request_quit(&mut self) {
-        self.state.borrow_mut().request_quit();
+    #[test]
+    fn printable_character_chords_keep_control() {
+        let chord = key_chord_from_event(TuiKeyEvent {
+            code: TuiKeyCode::Char('H'),
+            modifiers: TuiKeyModifiers {
+                control: true,
+                shift: true,
+                alt: false,
+            },
+        });
+
+        assert_eq!(
+            chord,
+            Some(KeyChord::new(
+                KeyCodeRepr::Char('H'),
+                KeyModifiersRepr::CONTROL
+            ))
+        );
     }
 
-    pub fn run_command(
-        &mut self,
-        command: &str,
-        lua_runtime: &mut impl SessionLuaRuntime,
-        package_runtime: &mut dyn SessionPackageRuntime,
-    ) {
-        let result = self.state.borrow_mut().dispatch_command(command);
-        Session::apply_command_result_shared(&self.state, result, lua_runtime, package_runtime);
-    }
+    #[test]
+    fn non_printable_chords_keep_shift() {
+        let chord = key_chord_from_event(TuiKeyEvent {
+            code: TuiKeyCode::Enter,
+            modifiers: TuiKeyModifiers {
+                control: false,
+                shift: true,
+                alt: false,
+            },
+        });
 
-    pub fn handle_key(
-        &mut self,
-        key: KeyEvent,
-        lua_runtime: &mut impl SessionLuaRuntime,
-        package_runtime: &mut dyn SessionPackageRuntime,
-    ) {
-        let mode = self.state.borrow().minibuffer().mode();
-        match mode {
-            MinibufferMode::Command => self.handle_command_key(key, lua_runtime, package_runtime),
-            MinibufferMode::Message => self.handle_message_key(key, lua_runtime, package_runtime),
-        }
-    }
-
-    fn handle_message_key(
-        &mut self,
-        key: KeyEvent,
-        lua_runtime: &mut impl SessionLuaRuntime,
-        package_runtime: &mut dyn SessionPackageRuntime,
-    ) {
-        let Some(chord) = KeyChord::from_event(key) else {
-            self.pending_key_sequence.clear();
-            return;
-        };
-        let had_pending_sequence = !self.pending_key_sequence.is_empty();
-        self.pending_key_sequence.push(chord);
-
-        let lookup = {
-            let state = self.state.borrow();
-            match state.lookup_keymap(&self.pending_key_sequence) {
-                KeymapLookup::Matched(command) => {
-                    ResolvedKeymapLookup::Matched(command.to_string())
-                }
-                KeymapLookup::Pending => ResolvedKeymapLookup::Pending,
-                KeymapLookup::NoMatch => ResolvedKeymapLookup::NoMatch,
-            }
-        };
-
-        match lookup {
-            ResolvedKeymapLookup::Pending => {}
-            ResolvedKeymapLookup::Matched(command) => {
-                self.pending_key_sequence.clear();
-                self.run_bound_command(&command, lua_runtime, package_runtime);
-            }
-            ResolvedKeymapLookup::NoMatch => {
-                self.pending_key_sequence.clear();
-                if had_pending_sequence {
-                    self.state.borrow_mut().set_status("Unknown pane key");
-                }
-            }
-        }
-    }
-
-    fn run_bound_command(
-        &mut self,
-        command: &str,
-        lua_runtime: &mut impl SessionLuaRuntime,
-        package_runtime: &mut dyn SessionPackageRuntime,
-    ) {
-        match command {
-            "app.quit" => self.request_quit(),
-            "minibuffer.command.enter" => self.state.borrow_mut().enter_command_mode(),
-            "buffer.new.next" => {
-                let name = self.state.borrow().next_buffer_name();
-                self.run_command(&format!("buffer.new {name}"), lua_runtime, package_runtime);
-            }
-            other => self.run_command(other, lua_runtime, package_runtime),
-        }
-    }
-
-    fn handle_command_key(
-        &mut self,
-        key: KeyEvent,
-        lua_runtime: &mut impl SessionLuaRuntime,
-        package_runtime: &mut dyn SessionPackageRuntime,
-    ) {
-        match key.code {
-            KeyCode::Esc => {
-                self.state.borrow_mut().cancel_command_mode();
-            }
-            KeyCode::Backspace => {
-                self.state.borrow_mut().backspace_command_input();
-            }
-            KeyCode::Enter => {
-                let result = self.state.borrow_mut().submit_command_input();
-                Session::apply_command_result_shared(
-                    &self.state,
-                    result,
-                    lua_runtime,
-                    package_runtime,
-                );
-            }
-            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.state.borrow_mut().push_command_input(ch);
-            }
-            _ => {}
-        }
+        assert_eq!(
+            chord,
+            Some(KeyChord::new(
+                KeyCodeRepr::Enter,
+                KeyModifiersRepr::new(false, true, false)
+            ))
+        );
     }
 }

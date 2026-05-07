@@ -1,4 +1,4 @@
-use super::{Session, SessionResult, SharedSession};
+use super::{Session, SessionFrontendEffect, SessionResult, SharedSession};
 use crate::kernel::{
     CommandEffect, CommandResult, JobStatus, MessageLevel, PackageInvocationRequest,
 };
@@ -66,7 +66,7 @@ impl Session {
     pub fn apply_command_result(
         shared: &SharedSession,
         result: CommandResult,
-        lua_runtime: &mut impl SessionLuaRuntime,
+        lua_runtime: &mut dyn SessionLuaRuntime,
         package_runtime: &mut dyn SessionPackageRuntime,
     ) -> SessionResult<()> {
         let (effects, _data, error) = result.into_parts();
@@ -82,7 +82,7 @@ impl Session {
     pub fn apply_command_result_shared(
         shared: &SharedSession,
         result: CommandResult,
-        lua_runtime: &mut impl SessionLuaRuntime,
+        lua_runtime: &mut dyn SessionLuaRuntime,
         package_runtime: &mut dyn SessionPackageRuntime,
     ) {
         if let Err(error) = Self::apply_command_result(shared, result, lua_runtime, package_runtime)
@@ -94,7 +94,7 @@ impl Session {
     fn apply_command_effect(
         shared: &SharedSession,
         effect: CommandEffect,
-        lua_runtime: &mut impl SessionLuaRuntime,
+        lua_runtime: &mut dyn SessionLuaRuntime,
         package_runtime: &mut dyn SessionPackageRuntime,
     ) -> SessionResult<()> {
         match effect {
@@ -106,7 +106,24 @@ impl Session {
                 shared.borrow_mut().request_quit();
                 Ok(())
             }
+            CommandEffect::NewWindow => {
+                shared
+                    .borrow_mut()
+                    .push_frontend_effect(SessionFrontendEffect::NewWindow);
+                Ok(())
+            }
             CommandEffect::EvalLua(script) => lua_runtime.eval(&script),
+            CommandEffect::SaveWorkspace(path) => shared
+                .borrow_mut()
+                .workspace_mut()
+                .save_snapshot_file(&path)
+                .map_err(|error| error.to_string()),
+            CommandEffect::LoadWorkspace(path) => {
+                let workspace = crate::kernel::Workspace::load_snapshot_file(&path)
+                    .map_err(|error| error.to_string())?;
+                shared.borrow_mut().replace_workspace(workspace);
+                Ok(())
+            }
             CommandEffect::InvokePackage(request) => {
                 {
                     let updated = shared
@@ -212,5 +229,54 @@ impl Session {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::{CommandEffect, CommandResult};
+
+    struct NoopLuaRuntime;
+
+    impl SessionLuaRuntime for NoopLuaRuntime {
+        fn eval(&mut self, _script: &str) -> SessionResult<()> {
+            Ok(())
+        }
+    }
+
+    struct NoopPackageRuntime;
+
+    impl SessionPackageRuntime for NoopPackageRuntime {
+        fn invoke_package(
+            &mut self,
+            _request: &PackageInvocationRequest,
+            _on_event: &mut dyn FnMut(PackageRunEvent),
+        ) -> SessionResult<PackageRunResult> {
+            Ok(PackageRunResult { exit_code: 0 })
+        }
+    }
+
+    #[test]
+    fn apply_command_result_queues_multiple_frontend_effects() {
+        let shared = Session::shared();
+        let mut result = CommandResult::with_effect(CommandEffect::NewWindow);
+        result.push(CommandEffect::NewWindow);
+        result.push(CommandEffect::SetStatus("Opened a new window".to_string()));
+        let mut lua_runtime = NoopLuaRuntime;
+        let mut package_runtime = NoopPackageRuntime;
+
+        Session::apply_command_result(&shared, result, &mut lua_runtime, &mut package_runtime)
+            .expect("command result should apply");
+
+        let mut session = shared.borrow_mut();
+        assert_eq!(
+            session.drain_frontend_effects(),
+            vec![
+                SessionFrontendEffect::NewWindow,
+                SessionFrontendEffect::NewWindow,
+            ]
+        );
+        assert_eq!(session.minibuffer().input(), "Opened a new window");
     }
 }

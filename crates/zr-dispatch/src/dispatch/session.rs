@@ -280,8 +280,6 @@ pub(crate) fn run_protocol_session_with_handler<'a>(
     .map_err(anyhow::Error::from)
 }
 
-/// Run a protocol session over generic reader/writer.
-/// Used by both command-mode (child stdio) and service-mode (TCP) dispatch.
 pub(crate) fn run_protocol_session(
     reader: impl BufRead,
     writer: impl Write + Send + 'static,
@@ -327,7 +325,6 @@ pub(crate) fn run_protocol_session(
     )
 }
 
-/// Render a progress bar on stderr (in-place update).
 fn render_progress(fraction: f64) {
     let clamped = fraction.clamp(0.0, 1.0);
     let pct = (clamped * 100.0) as u32;

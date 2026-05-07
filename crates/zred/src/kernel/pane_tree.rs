@@ -1,6 +1,7 @@
 use crate::kernel::ids::PaneId;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PaneTree {
     root: PaneNode,
 }
@@ -45,7 +46,7 @@ impl PaneTree {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PaneNode {
     Leaf(PaneId),
     Split {
@@ -172,7 +173,7 @@ impl PaneNode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PaneDirection {
     Left,
     Right,
@@ -196,7 +197,7 @@ impl PaneDirection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SplitAxis {
     Horizontal,
     Vertical,

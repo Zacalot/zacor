@@ -1,4 +1,6 @@
-#[derive(Clone, Debug, Eq, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MessageLog {
     messages: Vec<Message>,
 }
@@ -37,7 +39,7 @@ impl Default for MessageLog {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     level: MessageLevel,
     text: String,
@@ -60,7 +62,7 @@ impl Message {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum MessageLevel {
     Info,
     Warning,

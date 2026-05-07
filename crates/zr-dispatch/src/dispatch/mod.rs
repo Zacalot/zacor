@@ -25,7 +25,6 @@ use session::{
 };
 pub use session::{InvocationEvent, InvocationMessageLevel};
 
-/// A resolved package ready for dispatch.
 pub struct ResolvedPackage {
     pub receipt: Receipt,
     pub definition: PackageDefinition,
@@ -39,8 +38,6 @@ pub enum OutputMode {
     Plain,
     Json,
 }
-
-// ─── Resolve Phase ───────────────────────────────────────────────────
 
 fn resolve(home: &Path, name: &str) -> Result<ResolvedPackage> {
     let receipt = match receipt::read(home, name)? {
@@ -78,23 +75,16 @@ fn resolve(home: &Path, name: &str) -> Result<ResolvedPackage> {
     })
 }
 
-// ─── Execute Phase ───────────────────────────────────────────────────
-
-/// Resolve the effective execution mode: receipt mode > execution.default > "command".
 fn resolve_mode(resolved: &ResolvedPackage) -> receipt::Mode {
-    // 1. Receipt mode takes priority
     if let Some(mode) = resolved.receipt.mode {
         return mode;
     }
-    // 2. execution.default from package.yaml
-    if let Some(ref exec) = resolved.definition.execution {
-        if let Some(ref default) = exec.default {
-            if let Ok(mode) = default.parse::<receipt::Mode>() {
-                return mode;
-            }
-        }
+    if let Some(ref exec) = resolved.definition.execution
+        && let Some(ref default) = exec.default
+        && let Ok(mode) = default.parse::<receipt::Mode>()
+    {
+        return mode;
     }
-    // 3. Fallback to command
     receipt::Mode::Command
 }
 
@@ -136,9 +126,6 @@ fn execute(
     depth: usize,
     max_depth: usize,
 ) -> Result<i32> {
-    // Wasm packages always speak the module protocol. Route before the
-    // native protocol branch so the `wasm` field short-circuits the
-    // `binary`/`run` resolve path, which doesn't apply.
     if resolved.definition.wasm.is_some() {
         return execute_wasm(
             home,
@@ -155,7 +142,6 @@ fn execute(
         );
     }
 
-    // Protocol packages use the new module protocol
     if resolved.definition.protocol {
         let mode = resolve_mode(resolved);
         if mode == receipt::Mode::Service && resolved.definition.service.is_some() {
@@ -187,11 +173,8 @@ fn execute(
         );
     }
 
-    // Legacy path: env vars + raw stdout
     execute_command(home, resolved, env_vars, placeholders, command, output_mode)
 }
-
-// ─── Service Dispatch ────────────────────────────────────────────────
 
 fn execute_service(
     home: &Path,
@@ -213,10 +196,8 @@ fn execute_service(
         )
     })?;
 
-    // Ensure the service is running (starts daemon + service if needed)
     ensure_service_running(home, &resolved.definition.name, port)?;
 
-    // Connect to the running service via TCP
     let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).with_context(|| {
         format!(
             "failed to connect to service '{}' on port {}",
@@ -225,7 +206,6 @@ fn execute_service(
     })?;
     let reader = BufReader::new(stream.try_clone().context("failed to clone TCP stream")?);
 
-    // Build INVOKE message
     let has_input = command.input.is_some();
     let invoke_msg = Message::Invoke(proto::Invoke::from_str_args(
         command_path,
@@ -233,7 +213,6 @@ fn execute_service(
         has_input,
     ));
 
-    // Run protocol session over TCP
     run_protocol_session(
         reader,
         stream,
@@ -305,18 +284,12 @@ impl PackageRouter for LocalPackageRouter<'_> {
     }
 }
 
-/// Ensure a service is running by contacting the daemon.
-/// Starts the daemon lazily if it is not running.
 fn ensure_service_running(home: &Path, name: &str, port: u16) -> Result<()> {
-    // Try connecting to the service directly first (fast path)
     if TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
         return Ok(());
     }
 
-    // Contact daemon, start it lazily if needed
     let client = crate::daemon_client::connect_or_start_daemon(home)?;
-
-    // Ask daemon to start the service
     let response = crate::daemon_client::start_service(&client, name)?;
     if !response.ok {
         bail!(
@@ -329,10 +302,6 @@ fn ensure_service_running(home: &Path, name: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-// ─── Protocol Dispatch ───────────────────────────────────────────────
-
-/// Resolve the launch command for a protocol package.
-/// Returns `(program, args)` — either from `binary` (single executable) or `run` (tokenized command string).
 fn resolve_launch_command(
     home: &Path,
     def: &PackageDefinition,
@@ -367,7 +336,6 @@ fn resolve_launch_command(
             .map(|token| {
                 let candidate = store_dir.join(&token);
                 if candidate.exists() {
-                    // Use forward slashes so interpreted shells (bash, sh) work on Windows
                     candidate.to_string_lossy().replace('\\', "/")
                 } else {
                     token
@@ -399,11 +367,9 @@ fn execute_protocol(
 ) -> Result<i32> {
     let (program, args) = resolve_launch_command(home, &resolved.definition, &resolved.version)?;
 
-    // Set up Job Object on Windows so child dies when zr exits
     #[cfg(windows)]
     let _job = crate::job_object::JobObject::setup().ok();
 
-    // Spawn module with piped stdin/stdout, inherited stderr
     let mut child = Command::new(&program)
         .args(&args)
         .envs(env_vars)
@@ -421,7 +387,6 @@ fn execute_protocol(
     let child_stdin = child.stdin.take().unwrap();
     let child_stdout = child.stdout.take().unwrap();
 
-    // Build INVOKE message
     let has_input = command.input.is_some();
     let invoke_msg = Message::Invoke(proto::Invoke::from_str_args(
         command_path,
@@ -429,7 +394,6 @@ fn execute_protocol(
         has_input,
     ));
 
-    // Run protocol session over child stdio
     let reader = BufReader::new(child_stdout);
     let result = run_protocol_session(
         reader,
@@ -444,12 +408,9 @@ fn execute_protocol(
         max_depth,
     );
 
-    // If session ended without a DONE (e.g. crash), use process exit code
     let _ = child.wait();
     result
 }
-
-// ─── Wasm Dispatch ───────────────────────────────────────────────────
 
 fn execute_wasm(
     home: &Path,
@@ -484,7 +445,6 @@ fn execute_wasm(
     let debug_timing = std::env::var("ZR_DEBUG_TIMING").is_ok();
     let t0 = std::time::Instant::now();
 
-    // Build INVOKE message (same regardless of dispatch path).
     let has_input = command.input.is_some();
     let invoke_msg = Message::Invoke(proto::Invoke::from_str_args(
         command_path,
@@ -492,10 +452,6 @@ fn execute_wasm(
         has_input,
     ));
 
-    // Try daemon-hosted dispatch first — skips wasmtime init, uses the
-    // daemon's hot module cache. Falls back to in-process on any daemon
-    // error so single-user single-invocation cases still work without
-    // requiring an explicit `zacor daemon start`.
     match crate::daemon_client::try_open_dispatch_stream(
         home,
         &resolved.definition.name,
@@ -544,7 +500,6 @@ fn execute_wasm(
         }
     }
 
-    // In-process fallback.
     let host = wasm_runtime::WasmHost::shared()?;
     let module = host.load_module(&wasm_path)?;
 
@@ -992,8 +947,6 @@ fn execute_wasm_with_handler(
     result
 }
 
-// ─── Legacy Helpers ──────────────────────────────────────────────────
-
 fn execute_command(
     home: &Path,
     resolved: &ResolvedPackage,
@@ -1009,7 +962,6 @@ fn execute_command(
     );
 
     if let Some(ref binary_name) = resolved.definition.binary {
-        // Binary package: exec with env vars and empty argv
         let bin_path = paths::store_binary_path(
             home,
             &resolved.definition.name,
@@ -1100,15 +1052,11 @@ fn exec_binary(
     Ok(status.code().unwrap_or(1))
 }
 
-// ─── Public Entry Point ──────────────────────────────────────────────
-
 pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) -> Result<i32> {
     let resolved = resolve(home, name)?;
 
-    // Build clap command from package definition
     let cmd = build_clap_command(&resolved.definition);
 
-    // Parse with clap
     let (command_path, parsed_flags) = match clap_parse(cmd, name, args, &resolved.definition) {
         Ok(result) => result,
         Err(e) => {
@@ -1122,23 +1070,19 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
         }
     };
 
-    // Find the command definition
     let command = find_command(&resolved.definition.commands, &command_path)?;
     validate_command_input_mode(command)?;
 
-    // Discover project root
     let cwd = std::env::current_dir().ok();
     let project_root = match cwd {
         Some(ref c) => paths::discover_project_root(c, home),
         None => None,
     };
 
-    // Read project config if available
     let project_config = project_root
         .as_ref()
         .and_then(|root| config::read_project(root).ok());
 
-    // Build env vars and placeholder map
     let global_config = config::read_global(home).unwrap_or_default();
     let (env_vars, placeholders) = crate::execute::build_env_vars(
         home,
@@ -1161,7 +1105,6 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
         capabilities: &capabilities,
     };
 
-    // Execute
     execute(
         home,
         &resolved,
@@ -1228,7 +1171,6 @@ mod tests {
             ),
         )
         .unwrap();
-        // No package.yaml in store
         let result = run(home.path(), "broken", &[], OutputMode::Auto);
         assert!(result.is_err());
         let err = format!("{:#}", result.unwrap_err());
@@ -1238,8 +1180,6 @@ mod tests {
             err
         );
     }
-
-    // ─── mode resolution tests ──────────────────────────────────────
 
     fn make_resolved(
         mode: Option<receipt::Mode>,
@@ -1314,8 +1254,6 @@ commands:
         assert_eq!(resolve_mode(&resolved), receipt::Mode::Command);
     }
 
-    // ─── output mode tests ──────────────────────────────────────────
-
     #[test]
     fn test_resolve_render_mode() {
         let output = Some(crate::package_definition::OutputDeclaration {
@@ -1340,7 +1278,6 @@ commands:
             Some(RenderMode::Plain)
         );
         assert_eq!(resolve_render_mode(OutputMode::Json, &output, true), None);
-        // no output declaration → no render
         assert_eq!(resolve_render_mode(OutputMode::Plain, &None, false), None);
     }
 
@@ -1399,9 +1336,7 @@ commands:
         };
 
         let (program, args) = resolve_launch_command(home.path(), &def, "0.1.0").unwrap();
-        // python3 is on PATH, not resolved to store
         assert_eq!(program, "python3");
-        // main.py exists in store, should be resolved to full path
         assert_eq!(args.len(), 1);
         assert!(args[0].contains("main.py"), "got: {}", args[0]);
         assert!(
@@ -1505,7 +1440,6 @@ commands:
         .unwrap();
 
         let original_flag = std::env::var("ZR_DISPATCH_EVENT_FIXTURE").ok();
-        // SAFETY: test-only environment variable mutation for spawned fixture selection.
         unsafe {
             std::env::set_var("ZR_DISPATCH_EVENT_FIXTURE", "1");
         }
@@ -1523,7 +1457,6 @@ commands:
         )
         .unwrap();
 
-        // SAFETY: restore test-only environment variable after fixture invocation.
         unsafe {
             match original_flag {
                 Some(value) => std::env::set_var("ZR_DISPATCH_EVENT_FIXTURE", value),

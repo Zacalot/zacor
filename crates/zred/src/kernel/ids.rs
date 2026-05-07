@@ -1,8 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 macro_rules! define_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(
+            Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize,
+        )]
         pub struct $name(u64);
 
         impl $name {
@@ -75,6 +78,22 @@ impl IdAllocator {
 impl Default for IdAllocator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl IdAllocator {
+    pub fn from_next_ids(
+        next_buffer_id: u64,
+        next_pane_id: u64,
+        next_workspace_id: u64,
+        next_job_id: u64,
+    ) -> Self {
+        Self {
+            next_buffer_id,
+            next_pane_id,
+            next_workspace_id,
+            next_job_id,
+        }
     }
 }
 

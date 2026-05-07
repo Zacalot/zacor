@@ -11,12 +11,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
-// ─── Env Var Building ────────────────────────────────────────────────
-
-/// Build env vars and placeholder map for package execution.
-///
-/// Resolves config through the full layering system:
-/// flags > env > project per-pkg > project [zr] > receipt config > global per-pkg > global [zr] > package defaults
 #[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 pub fn build_env_vars(
@@ -37,30 +31,25 @@ pub fn build_env_vars(
     let mut env_vars = BTreeMap::new();
     let mut placeholders = BTreeMap::new();
 
-    // System vars
     env_vars.insert("ZR_PACKAGE".to_string(), package_name.to_string());
     env_vars.insert("ZR_COMMAND".to_string(), command_path.to_string());
     env_vars.insert("ZR_VERSION".to_string(), version.to_string());
     env_vars.insert("ZR_HOME".to_string(), home.to_string_lossy().into_owned());
 
-    // Project vars
     if let Some(root) = project_root {
         env_vars.insert(
             "ZR_PROJECT".to_string(),
             root.to_string_lossy().into_owned(),
         );
     }
-    if project_data {
-        if let Some(root) = project_root.or(cwd) {
-            let data_dir = crate::paths::project_data_dir(root, package_name);
-            env_vars.insert(
-                "ZR_DATA".to_string(),
-                data_dir.to_string_lossy().into_owned(),
-            );
-        }
+    if project_data && let Some(root) = project_root.or(cwd) {
+        let data_dir = crate::paths::project_data_dir(root, package_name);
+        env_vars.insert(
+            "ZR_DATA".to_string(),
+            data_dir.to_string_lossy().into_owned(),
+        );
     }
 
-    // Collect all declared keys with BTreeSet for natural deduplication
     let all_keys: BTreeSet<&str> = command
         .args
         .keys()
@@ -90,9 +79,6 @@ pub fn build_env_vars(
     (env_vars, placeholders)
 }
 
-// ─── Invoke Template Execution ───────────────────────────────────────
-
-/// Execute an invoke template with placeholder substitution.
 pub fn exec_invoke(
     invoke: &InvokeTemplate,
     env_vars: &BTreeMap<String, String>,
@@ -109,7 +95,6 @@ pub fn exec_invoke(
         bail!("invoke template is empty");
     }
 
-    // Substitute placeholders and filter
     let mut argv: Vec<String> = Vec::new();
     for token in &tokens {
         if let Some(substituted) = substitute_token(token, placeholders) {
@@ -136,10 +121,6 @@ pub fn exec_invoke(
     Ok(status.code().unwrap_or(1))
 }
 
-// ─── Token Substitution ─────────────────────────────────────────────
-
-/// Substitute `{arg_name}` and `{config.key}` placeholders in a token.
-/// Returns None if the token consists entirely of missing optional placeholders.
 pub fn substitute_token(token: &str, placeholders: &BTreeMap<String, String>) -> Option<String> {
     let mut result = String::with_capacity(token.len());
     let mut has_placeholder = false;
@@ -149,7 +130,6 @@ pub fn substitute_token(token: &str, placeholders: &BTreeMap<String, String>) ->
     while pos < token.len() {
         if let Some(open) = token[pos..].find('{') {
             let abs_open = pos + open;
-            // Push literal text before the '{'
             if open > 0 {
                 result.push_str(&token[pos..abs_open]);
                 all_missing = false;
@@ -163,12 +143,10 @@ pub fn substitute_token(token: &str, placeholders: &BTreeMap<String, String>) ->
                 }
                 pos = abs_open + 1 + close + 1;
             } else {
-                // Unmatched '{' — push it and move on
                 result.push('{');
                 pos = abs_open + 1;
             }
         } else {
-            // No more '{' — push remaining text
             if !token[pos..].is_empty() {
                 result.push_str(&token[pos..]);
                 all_missing = false;
@@ -200,7 +178,7 @@ mod tests {
     fn test_substitute_token_missing_optional() {
         let placeholders = BTreeMap::new();
         let result = substitute_token("{optional-arg}", &placeholders);
-        assert_eq!(result, None); // Entire token omitted
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -251,20 +229,14 @@ mod tests {
             &receipt,
             &global_config,
             &def_config,
-            None, // no project_root — no .zr/ found
-            true, // project_data
             None,
-            Some(cwd), // cwd fallback
+            true,
+            None,
+            Some(cwd),
         );
 
-        // ZR_DATA should be set using cwd as fallback root
         let expected = format!("{}", cwd.join(".zr").join("wf").display());
         assert_eq!(env_vars.get("ZR_DATA").unwrap(), &expected);
-
-        // ZR_PROJECT should NOT be set when no .zr/ exists
         assert!(!env_vars.contains_key("ZR_PROJECT"));
     }
 }
-// This file remains shared between the `zacor` crate and the extracted
-// dispatch/runtime surface. `zacor` uses part of the execution surface for its
-// own workflows, while `zr-dispatch` owns the shared dispatch path.

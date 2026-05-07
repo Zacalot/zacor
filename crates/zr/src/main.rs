@@ -4,6 +4,7 @@ pub use zacor_host::{
     config, error, host as wasm_runtime, manifest as wasm_manifest, package_definition, paths,
     platform, receipt,
 };
+pub use zr_dispatch as dispatch;
 
 #[cfg(test)]
 pub use zacor_host::test_util;
@@ -11,16 +12,6 @@ pub use zacor_host::test_util;
 #[path = "../../zacor/src/cli/zr.rs"]
 mod cli;
 mod daemon_client;
-#[path = "../../zacor/src/dispatch/mod.rs"]
-mod dispatch;
-#[path = "../../zacor/src/execute.rs"]
-mod execute;
-#[cfg(windows)]
-#[path = "../../zacor/src/job_object.rs"]
-mod job_object;
-mod providers;
-#[path = "../../zacor/src/render.rs"]
-mod render;
 
 pub(crate) fn resolve_peer_binary(name: &str) -> std::path::PathBuf {
     let env_name = format!("CARGO_BIN_EXE_{name}");

@@ -8,10 +8,15 @@ description = "Terminal editor foundation for zacor"
 
 [dependencies]
 anyhow = "1"
+bytemuck = { version = "1", features = ["derive"] }
 crossterm = "0.28"
 dirs = "6"
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.10", features = ["lua54", "serialize", "vendored"] }
 ratatui = "0.29"
+serde.workspace = true
 serde_json.workspace = true
+winit = "0.30"
+wgpu = "24"
+pollster = "0.4"
 zacor-host.workspace = true
 zr-dispatch.workspace = true

@@ -1,5 +1,6 @@
 use crate::kernel::ids::{BufferId, PaneId};
 use crate::kernel::selection::Selection;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pane {
@@ -63,7 +64,7 @@ impl Pane {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Viewport {
     pub offset_x: usize,
     pub offset_y: usize,
@@ -76,7 +77,7 @@ impl Viewport {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PanePresentation {
     #[default]
     Default,

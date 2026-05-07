@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 #[allow(dead_code)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Selection {
     Text(TextSelection),
     Records(RecordSelection),
@@ -7,7 +9,7 @@ pub enum Selection {
     Surface(SurfaceSelection),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TextSelection {
     ranges: Vec<TextRange>,
 }
@@ -29,7 +31,7 @@ impl TextSelection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TextRange {
     anchor: usize,
     head: usize,
@@ -54,7 +56,7 @@ impl TextRange {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecordSelection {
     rows: Vec<usize>,
 }
@@ -71,7 +73,7 @@ impl RecordSelection {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TreeSelection {
     node_ids: Vec<String>,
 }
@@ -87,7 +89,7 @@ impl TreeSelection {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SurfaceSelection {
     target: String,
 }

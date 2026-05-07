@@ -24,6 +24,7 @@ timeago = "0.4"
 tokio = { version = "1", features = ["full"] }
 zacor-host = { workspace = true, features = ["testing"] }
 zacor-package.workspace = true
+zr-dispatch.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [

@@ -6,8 +6,6 @@ use crate::package_definition::{
 use clap::ArgAction;
 use std::collections::BTreeMap;
 
-/// Build a `clap::Command` from a `PackageDefinition`, mapping commands,
-/// args, and the `default` command convention to clap's builder API.
 pub fn build_clap_command(def: &PackageDefinition) -> clap::Command {
     let mut cmd = clap::Command::new(def.name.clone())
         .version(def.version.clone())
@@ -27,7 +25,6 @@ pub fn build_clap_command(def: &PackageDefinition) -> clap::Command {
 
     match (has_default, has_named) {
         (true, false) => {
-            // Single default: hoist args to root, no subcommand layer
             let default_cmd = &def.commands["default"];
             if def.description.is_none()
                 && let Some(ref desc) = default_cmd.description
@@ -43,7 +40,6 @@ pub fn build_clap_command(def: &PackageDefinition) -> clap::Command {
             }
         }
         (true, true) => {
-            // Default + named: hoist default args, named become subcommands
             let default_cmd = &def.commands["default"];
             let has_rest = default_cmd.args.values().any(|a| a.rest);
             for (name, arg_def) in &default_cmd.args {
@@ -58,7 +54,6 @@ pub fn build_clap_command(def: &PackageDefinition) -> clap::Command {
             }
         }
         (false, _) => {
-            // Named only: subcommand required
             cmd = cmd.subcommand_required(true);
             for (name, cmd_def) in &named {
                 cmd = cmd.subcommand(build_subcommand(name, cmd_def));
@@ -69,8 +64,6 @@ pub fn build_clap_command(def: &PackageDefinition) -> clap::Command {
     cmd
 }
 
-/// Build a clap subcommand from a `CommandDefinition`, recursively
-/// mapping nested commands.
 fn build_subcommand(name: &str, def: &CommandDefinition) -> clap::Command {
     let mut cmd = clap::Command::new(name.to_string());
 
@@ -97,19 +90,15 @@ fn build_subcommand(name: &str, def: &CommandDefinition) -> clap::Command {
     cmd
 }
 
-/// Build a `clap::Arg` from an `ArgumentDefinition`, mapping ArgType
-/// to clap value parsers and handling flag vs positional.
 fn build_arg(name: &str, def: &ArgumentDefinition) -> clap::Arg {
     let mut arg = clap::Arg::new(name.to_string());
 
-    // Flag vs positional — bools always become --flags
     if let Some(ref flag) = def.flag {
         arg = arg.long(flag.clone());
     } else if def.arg_type == ArgType::Bool {
         arg = arg.long(name.to_string());
     }
 
-    // Type mapping
     match def.arg_type {
         ArgType::Bool => {
             arg = arg.action(ArgAction::SetTrue);
@@ -128,17 +117,14 @@ fn build_arg(name: &str, def: &ArgumentDefinition) -> clap::Arg {
         ArgType::String => {}
     }
 
-    // Rest arg: consume all remaining tokens
     if def.rest {
         arg = arg.num_args(0..);
     }
 
-    // Required (only non-Bool args without defaults)
     if def.arg_type != ArgType::Bool && def.required && def.default.is_none() {
         arg = arg.required(true);
     }
 
-    // Default value (for required args with defaults — inserted at flag priority)
     if def.required
         && let Some(ref default) = def.default
     {
@@ -154,9 +140,6 @@ fn parse_number(s: &str) -> std::result::Result<String, String> {
     Ok(s.to_string())
 }
 
-/// Parse CLI args using a clap Command built from a PackageDefinition.
-/// Returns (command_path, parsed_flags) where command_path is like
-/// "default", "transcribe", or "transcribe.batch".
 #[allow(dead_code)]
 pub(super) fn clap_parse(
     cmd: clap::Command,
@@ -169,7 +152,6 @@ pub(super) fn clap_parse(
 
     let matches = cmd.try_get_matches_from(full_args)?;
 
-    // Check for subcommand match
     if let Some((sub_name, sub_matches)) = matches.subcommand()
         && let Some(cmd_def) = def.commands.get(sub_name)
     {
@@ -182,17 +164,14 @@ pub(super) fn clap_parse(
         return Ok((path, flags));
     }
 
-    // No subcommand matched — use default command
     if let Some(default_cmd) = def.commands.get("default") {
         let flags = extract_args(&matches, &default_cmd.args);
         return Ok(("default".to_string(), flags));
     }
 
-    // Should not reach here (clap would have errored for named-only)
     Ok(("default".to_string(), BTreeMap::new()))
 }
 
-/// Recursively extract the deepest matched subcommand and its args.
 #[allow(dead_code)]
 fn extract_from_command(
     matches: &clap::ArgMatches,
@@ -214,7 +193,6 @@ fn extract_from_command(
     (String::new(), flags)
 }
 
-/// Extract arg values from clap matches using the argument definitions.
 #[allow(dead_code)]
 fn extract_args(
     matches: &clap::ArgMatches,
@@ -240,7 +218,6 @@ fn extract_args(
     flags
 }
 
-/// Look up a CommandDefinition by dot-separated path (e.g., "transcribe.batch").
 #[allow(dead_code)]
 pub(super) fn find_command<'a>(
     commands: &'a BTreeMap<String, CommandDefinition>,
@@ -265,8 +242,6 @@ pub(super) fn find_command<'a>(
 mod tests {
     use super::*;
 
-    // ─── build_clap_command tests ────────────────────────────────────
-
     #[test]
     fn test_build_clap_single_default() {
         let yaml = r#"
@@ -284,7 +259,6 @@ commands:
         let def = crate::package_definition::parse(yaml).unwrap();
         let cmd = build_clap_command(&def);
 
-        // Should accept positional arg, no "default" subcommand
         let matches = cmd.try_get_matches_from(["echo", "hello"]).unwrap();
         assert_eq!(matches.get_one::<String>("text").unwrap(), "hello");
         assert!(matches.subcommand().is_none());
@@ -309,13 +283,11 @@ commands:
 "#;
         let def = crate::package_definition::parse(yaml).unwrap();
 
-        // No subcommand: uses default's args
         let cmd = build_clap_command(&def);
         let matches = cmd.try_get_matches_from(["my-pkg", "hello"]).unwrap();
         assert!(matches.subcommand().is_none());
         assert_eq!(matches.get_one::<String>("text").unwrap(), "hello");
 
-        // Named subcommand works
         let cmd = build_clap_command(&def);
         let matches = cmd
             .try_get_matches_from(["my-pkg", "transcribe", "file.mp3"])
@@ -339,7 +311,6 @@ commands:
         let def = crate::package_definition::parse(yaml).unwrap();
         let cmd = build_clap_command(&def);
 
-        // No subcommand should error
         let result = cmd.try_get_matches_from(["my-pkg"]);
         assert!(result.is_err());
     }
@@ -400,17 +371,14 @@ commands:
 "#;
         let def = crate::package_definition::parse(yaml).unwrap();
 
-        // Number validation rejects non-numeric
         let cmd = build_clap_command(&def);
         let result = cmd.try_get_matches_from(["test", "hello", "--count", "abc"]);
         assert!(result.is_err());
 
-        // Choice validation rejects invalid value
         let cmd = build_clap_command(&def);
         let result = cmd.try_get_matches_from(["test", "hello", "--format", "invalid"]);
         assert!(result.is_err());
 
-        // Valid args parse correctly
         let cmd = build_clap_command(&def);
         let matches = cmd
             .try_get_matches_from([
@@ -450,7 +418,6 @@ commands:
 "#;
         let def = crate::package_definition::parse(yaml).unwrap();
 
-        // Positional + flag
         let cmd = build_clap_command(&def);
         let matches = cmd
             .try_get_matches_from(["test", "hello", "--model", "large"])
@@ -458,7 +425,6 @@ commands:
         assert_eq!(matches.get_one::<String>("text").unwrap(), "hello");
         assert_eq!(matches.get_one::<String>("model").unwrap(), "large");
 
-        // Flag before positional
         let cmd = build_clap_command(&def);
         let matches = cmd
             .try_get_matches_from(["test", "--model", "base", "hello"])
@@ -466,8 +432,6 @@ commands:
         assert_eq!(matches.get_one::<String>("text").unwrap(), "hello");
         assert_eq!(matches.get_one::<String>("model").unwrap(), "base");
     }
-
-    // ─── clap_parse tests ────────────────────────────────────────────
 
     #[test]
     fn test_clap_parse_default_command() {
@@ -563,12 +527,10 @@ commands:
 "#;
         let def = crate::package_definition::parse(yaml).unwrap();
 
-        // With flag
         let cmd = build_clap_command(&def);
         let (_, flags) = clap_parse(cmd, "test", &["--verbose".to_string()], &def).unwrap();
         assert_eq!(flags["verbose"], "true");
 
-        // Without flag
         let cmd = build_clap_command(&def);
         let (_, flags) = clap_parse(cmd, "test", &[], &def).unwrap();
         assert!(!flags.contains_key("verbose"));
@@ -611,13 +573,11 @@ commands:
 "#;
         let def = crate::package_definition::parse(yaml).unwrap();
 
-        // Bools without explicit flag: become --flags automatically
         let cmd = build_clap_command(&def);
         let (_, flags) = clap_parse(cmd, "test", &["--changes".to_string()], &def).unwrap();
         assert_eq!(flags["changes"], "true");
         assert!(!flags.contains_key("drafts"));
 
-        // Both flags
         let cmd = build_clap_command(&def);
         let (_, flags) = clap_parse(
             cmd,
@@ -629,14 +589,11 @@ commands:
         assert_eq!(flags["changes"], "true");
         assert_eq!(flags["drafts"], "true");
 
-        // No flags
         let cmd = build_clap_command(&def);
         let (_, flags) = clap_parse(cmd, "test", &[], &def).unwrap();
         assert!(!flags.contains_key("changes"));
         assert!(!flags.contains_key("drafts"));
     }
-
-    // ─── find_command tests ──────────────────────────────────────────
 
     #[test]
     fn test_find_command_default() {
@@ -669,6 +626,3 @@ commands:
         assert!(result.is_err());
     }
 }
-// This file remains shared between the `zacor` crate and the extracted
-// dispatch/runtime surface. `zacor` only uses the clap command builder for
-// completions, while `zr-dispatch` owns the broader shared dispatch path.

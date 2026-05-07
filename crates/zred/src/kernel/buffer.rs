@@ -1,10 +1,11 @@
 use crate::kernel::ids::BufferId;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const SCRATCH_BUFFER_NAME: &str = "*scratch*";
 pub const SCRATCH_BUFFER_TEXT: &str = "zred: Ctrl-Q or :q to quit";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum BufferKind {
     Text,
     Records,
@@ -88,10 +89,64 @@ impl Buffer {
         content.push(record);
         true
     }
+
+    pub fn set_records(&mut self, records: Vec<Value>) -> bool {
+        let BufferContent::Records(content) = &mut self.content else {
+            return false;
+        };
+
+        content.set(records);
+        true
+    }
+
+    pub fn set_browser_title(&mut self, title: &str) -> bool {
+        let BufferContent::Browser(content) = &mut self.content else {
+            return false;
+        };
+
+        content.set_title(title);
+        true
+    }
+
+    pub fn set_browser_url(&mut self, url: &str) -> bool {
+        let BufferContent::Browser(content) = &mut self.content else {
+            return false;
+        };
+
+        content.set_url(url);
+        true
+    }
+
+    pub fn set_media_source(&mut self, source: &str) -> bool {
+        let BufferContent::Media(content) = &mut self.content else {
+            return false;
+        };
+
+        content.set_source(source);
+        true
+    }
+
+    pub fn set_canvas_name(&mut self, name: &str) -> bool {
+        let BufferContent::Canvas(content) = &mut self.content else {
+            return false;
+        };
+
+        content.set_name(name);
+        true
+    }
+
+    pub fn append_terminal_text(&mut self, text: &str) -> bool {
+        let BufferContent::Terminal(content) = &mut self.content else {
+            return false;
+        };
+
+        content.transcript_mut().append(text);
+        true
+    }
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BufferContent {
     Text(TextContent),
     Records(RecordsContent),
@@ -116,7 +171,7 @@ impl BufferContent {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TextContent {
     lines: Vec<TextLine>,
 }
@@ -155,7 +210,7 @@ impl TextContent {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TextLine {
     text: String,
 }
@@ -170,7 +225,7 @@ impl TextLine {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RecordsContent {
     records: Vec<Value>,
 }
@@ -185,13 +240,17 @@ impl RecordsContent {
         &self.records
     }
 
+    pub fn set(&mut self, records: Vec<Value>) {
+        self.records = records;
+    }
+
     #[allow(dead_code)]
     pub fn push(&mut self, record: Value) {
         self.records.push(record);
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TreeContent {
     roots: Vec<TreeNode>,
 }
@@ -207,10 +266,11 @@ impl TreeContent {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TreeNode {
     id: String,
     label: String,
+    linked_buffer_id: Option<BufferId>,
     children: Vec<TreeNode>,
 }
 
@@ -220,6 +280,20 @@ impl TreeNode {
         Self {
             id: id.into(),
             label: label.into(),
+            linked_buffer_id: None,
+            children: Vec::new(),
+        }
+    }
+
+    pub fn with_linked_buffer(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        linked_buffer_id: BufferId,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            linked_buffer_id: Some(linked_buffer_id),
             children: Vec::new(),
         }
     }
@@ -232,6 +306,10 @@ impl TreeNode {
         &self.label
     }
 
+    pub fn linked_buffer_id(&self) -> Option<BufferId> {
+        self.linked_buffer_id
+    }
+
     pub fn children(&self) -> &[TreeNode] {
         &self.children
     }
@@ -241,7 +319,7 @@ impl TreeNode {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TerminalContent {
     transcript: TextContent,
 }
@@ -257,7 +335,7 @@ impl TerminalContent {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BrowserContent {
     url: Option<String>,
     title: Option<String>,
@@ -273,12 +351,20 @@ impl BrowserContent {
         self.url.as_deref()
     }
 
+    pub fn set_url(&mut self, url: impl Into<String>) {
+        self.url = Some(url.into());
+    }
+
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
+
+    pub fn set_title(&mut self, title: impl Into<String>) {
+        self.title = Some(title.into());
+    }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MediaContent {
     source: Option<String>,
 }
@@ -292,9 +378,13 @@ impl MediaContent {
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
     }
+
+    pub fn set_source(&mut self, source: impl Into<String>) {
+        self.source = Some(source.into());
+    }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CanvasContent {
     name: Option<String>,
 }
@@ -307,6 +397,10 @@ impl CanvasContent {
 
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
+    }
+
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = Some(name.into());
     }
 }
 

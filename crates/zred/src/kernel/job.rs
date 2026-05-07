@@ -1,7 +1,8 @@
 use crate::kernel::ids::{BufferId, JobId, PaneId, WorkspaceId};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct JobRegistry {
     jobs: BTreeMap<JobId, Job>,
 }
@@ -47,7 +48,7 @@ impl Default for JobRegistry {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Job {
     id: JobId,
     name: String,
@@ -102,7 +103,7 @@ impl Job {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum JobStatus {
     Pending,
     Running,
@@ -112,14 +113,14 @@ pub enum JobStatus {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum JobOwner {
     Workspace(WorkspaceId),
     Buffer(BufferId),
     Pane(PaneId),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum JobKind {
     Generic,
     PackageInvoke {

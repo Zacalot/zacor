@@ -1,7 +1,7 @@
 mod api;
 mod init;
 
-use crate::session::{LuaBufferApi, LuaCommandApi, LuaMinibufferApi, SharedSession};
+use crate::session::{LuaBufferApi, LuaCommandApi, LuaJobApi, LuaMinibufferApi, SharedSession};
 use anyhow::{Result, anyhow};
 use mlua::Lua;
 
@@ -16,6 +16,7 @@ impl LuaRuntime {
             &lua,
             LuaCommandApi::new(state.clone()),
             LuaBufferApi::new(state.clone()),
+            LuaJobApi::new(state.clone()),
             LuaMinibufferApi::new(state),
         )
         .map_err(|error| anyhow!(error.to_string()))?;

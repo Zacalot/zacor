@@ -339,7 +339,7 @@ fn drive_warm_instance(
         match msg {
             zacor_package::protocol::Message::Output(output) => outputs.push(output.record),
             zacor_package::protocol::Message::CapabilityReq(req) => {
-                let res = crate::providers::build_default_registry().dispatch(&req);
+                let res = zr_dispatch::build_default_registry().dispatch(&req);
                 let msg =
                     serde_json::to_string(&zacor_package::protocol::Message::CapabilityRes(res))
                         .unwrap();

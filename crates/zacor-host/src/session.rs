@@ -16,7 +16,16 @@ pub trait OutputHandler {
 
     fn on_progress(&mut self, _fraction: f64) {}
 
+    fn on_message(&mut self, _level: OutputMessageLevel, _text: &str) {}
+
     fn finish(&mut self) {}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputMessageLevel {
+    Info,
+    Warning,
+    Error,
 }
 
 pub trait InputSource {
@@ -295,7 +304,7 @@ pub fn run_session(
             }
             Message::Done(done) => {
                 if let Some(error) = done.error {
-                    eprintln!("error: {error}");
+                    output_handler.on_message(OutputMessageLevel::Error, &error);
                 }
                 output_handler.finish();
                 return Ok(done.exit_code);

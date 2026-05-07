@@ -1,57 +1,48 @@
+use crate::frontends::native;
 use crate::frontends::tui;
-use crate::frontends::tui::events::AppEvent;
-use crate::frontends::tui::terminal::TerminalGuard;
-use crate::runtime::AppRuntime;
-use crate::session::Session;
 use anyhow::Result;
-use crossterm::event::KeyEvent;
-use std::cell::Ref;
-use std::time::Duration;
 
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
 
-const TICK_RATE: Duration = Duration::from_millis(100);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrontendKind {
+    Native,
+    Tui,
+}
+
+fn frontend_for_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> FrontendKind {
+    if args.into_iter().any(|arg| arg.as_ref() == "--tui") {
+        FrontendKind::Tui
+    } else {
+        FrontendKind::Native
+    }
+}
 
 pub fn run() -> Result<()> {
-    let mut terminal = TerminalGuard::enter()?;
-    let mut app = App::new()?;
-
-    loop {
-        if app.state().should_quit() {
-            break;
-        }
-        terminal.draw(|frame| {
-            let state = app.state();
-            tui::render::render(frame, &state)
-        })?;
-        match tui::events::next(TICK_RATE)? {
-            AppEvent::Key(key) => app.handle_key(key),
-            AppEvent::Tick => {}
-        }
+    match frontend_for_args(std::env::args()) {
+        FrontendKind::Native => native::run(),
+        FrontendKind::Tui => tui::run(),
     }
-
-    Ok(())
 }
 
-pub struct App {
-    runtime: AppRuntime,
-}
+#[cfg(test)]
+mod frontend_tests {
+    use super::{frontend_for_args, FrontendKind};
 
-impl App {
-    pub fn new() -> Result<Self> {
-        let state = Session::shared();
-        Ok(Self {
-            runtime: AppRuntime::new(state)?,
-        })
+    #[test]
+    fn defaults_to_native_frontend() {
+        assert_eq!(frontend_for_args(["zred"]), FrontendKind::Native);
     }
 
-    pub fn state(&self) -> Ref<'_, Session> {
-        self.runtime.state()
+    #[test]
+    fn keeps_native_when_native_flag_is_present() {
+        assert_eq!(frontend_for_args(["zred", "--native"]), FrontendKind::Native);
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) {
-        self.runtime.handle_key(key);
+    #[test]
+    fn allows_explicit_tui_fallback() {
+        assert_eq!(frontend_for_args(["zred", "--tui"]), FrontendKind::Tui);
     }
 }

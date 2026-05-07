@@ -74,7 +74,10 @@ impl CommandResult {
 pub enum CommandEffect {
     SetStatus(String),
     Quit,
+    NewWindow,
     EvalLua(String),
+    SaveWorkspace(String),
+    LoadWorkspace(String),
     InvokePackage(PackageInvocationRequest),
 }
 
@@ -87,13 +90,78 @@ pub enum CommandData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandInvocation {
     Quit,
+    NewWindow,
     Help {
         name: Option<String>,
     },
     EvalLua {
         script: String,
     },
+    WorkspaceSave {
+        path: String,
+    },
+    WorkspaceLoad {
+        path: String,
+    },
+    JobList,
+    JobNext,
+    JobPrevious,
+    JobOpen,
+    BufferStructuredCurrent,
+    BufferStructuredOpen,
+    BufferStructuredNext,
+    BufferStructuredPrevious,
+    BufferRecordCurrent,
+    BufferRecordOpen,
+    BufferRecordNext,
+    BufferRecordPrevious,
+    BufferTreeCurrent,
+    BufferTreeOpen,
+    BufferTreeNext,
+    BufferTreePrevious,
+    JobDescribe {
+        job_id: Option<JobId>,
+    },
+    JobFocusOutput {
+        job_id: Option<JobId>,
+    },
+    JobCancel {
+        job_id: Option<JobId>,
+    },
+    BufferDescribe,
     BufferNew {
+        name: String,
+    },
+    TerminalOpen {
+        name: String,
+    },
+    TerminalAppend {
+        buffer_id: Option<BufferId>,
+        text: String,
+    },
+    BrowserOpen {
+        url: String,
+    },
+    BrowserSetUrl {
+        buffer_id: Option<BufferId>,
+        url: String,
+    },
+    BrowserSetTitle {
+        buffer_id: Option<BufferId>,
+        title: String,
+    },
+    MediaOpen {
+        source: String,
+    },
+    MediaSetSource {
+        buffer_id: Option<BufferId>,
+        source: String,
+    },
+    CanvasOpen {
+        name: String,
+    },
+    CanvasSetName {
+        buffer_id: Option<BufferId>,
         name: String,
     },
     SplitPane {
