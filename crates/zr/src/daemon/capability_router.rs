@@ -27,11 +27,12 @@ impl CapabilityRouter {
         op: &str,
         params: serde_json::Value,
     ) -> CapabilityRes {
-        self.registry.dispatch(&zacor_host::protocol::CapabilityReq {
-            id,
-            domain: domain.into(),
-            op: op.into(),
-            params,
-        })
+        self.registry
+            .dispatch(&zacor_host::protocol::CapabilityReq {
+                id,
+                domain: domain.into(),
+                op: op.into(),
+                params,
+            })
     }
 }

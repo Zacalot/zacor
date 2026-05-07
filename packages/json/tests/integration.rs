@@ -55,14 +55,24 @@ fn json_pretty_print() {
 
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    assert_eq!(output.status.code(), Some(0), "json failed: {}\nstderr: {}", stdout, String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "json failed: {}\nstderr: {}",
+        stdout,
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let records = parse_output_records(&stdout);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["valid"], true);
     // Pretty-printed output should contain newlines
     let output_str = records[0]["output"].as_str().unwrap();
-    assert!(output_str.contains('\n'), "Expected pretty output: {}", output_str);
+    assert!(
+        output_str.contains('\n'),
+        "Expected pretty output: {}",
+        output_str
+    );
 }
 
 #[test]
@@ -99,7 +109,12 @@ fn json_compact_mode() {
 
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    assert_eq!(output.status.code(), Some(0), "json compact failed: {}", stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "json compact failed: {}",
+        stdout
+    );
 
     let records = parse_output_records(&stdout);
     assert_eq!(records.len(), 1);
@@ -139,7 +154,11 @@ fn json_validate_valid() {
     drop(stdin);
 
     let output = child.wait_with_output().unwrap();
-    assert_eq!(output.status.code(), Some(0), "validate should succeed for valid JSON");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "validate should succeed for valid JSON"
+    );
 }
 
 #[test]
@@ -174,5 +193,9 @@ fn json_validate_invalid() {
     drop(stdin);
 
     let output = child.wait_with_output().unwrap();
-    assert_ne!(output.status.code(), Some(0), "validate should fail for invalid JSON");
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "validate should fail for invalid JSON"
+    );
 }

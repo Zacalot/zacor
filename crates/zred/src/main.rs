@@ -1,9 +1,11 @@
 #![warn(clippy::all)]
 
 mod app;
-mod events;
+mod frontends;
+mod kernel;
 mod lua;
-mod ui;
+mod runtime;
+mod session;
 
 fn main() {
     if let Err(error) = app::run() {

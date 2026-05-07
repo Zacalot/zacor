@@ -3,10 +3,7 @@ use std::io::BufRead;
 
 zacor_package::include_args!();
 
-pub fn cmd_by(
-    args: &args::ByArgs,
-    input: Option<Box<dyn BufRead>>,
-) -> Result<Vec<Value>, String> {
+pub fn cmd_by(args: &args::ByArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
     let reader = input.ok_or("sort by: requires piped input")?;
     let mut records = zacor_package::parse_records(reader)?;
 
@@ -157,12 +154,15 @@ fn natural_cmp(a: &str, b: &str, ignore_case: bool) -> std::cmp::Ordering {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 

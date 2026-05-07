@@ -111,7 +111,8 @@ fn detect_built_artifact(
     binary_name: &str,
 ) -> Option<(PathBuf, bool)> {
     let native_dir = project_root.join(native_build_output);
-    let wasm_dir_rel = native_build_output.replace("target/release", "target/wasm32-wasip1/release");
+    let wasm_dir_rel =
+        native_build_output.replace("target/release", "target/wasm32-wasip1/release");
     let wasm_dir = project_root.join(&wasm_dir_rel);
 
     let wasm = wasm_dir.join(format!("{binary_name}.wasm"));
@@ -138,10 +139,7 @@ fn detect_built_artifact(
 /// manifest as the authoritative definition. Shared between `install_wasm`
 /// (bare `.wasm`) and `install_project` (directory install that detected
 /// a wasm build).
-fn install_wasm_artifact(
-    wasm_path: &Path,
-    source_display: String,
-) -> Result<AcquireResult> {
+fn install_wasm_artifact(wasm_path: &Path, source_display: String) -> Result<AcquireResult> {
     let def = crate::wasm_manifest::read_manifest(wasm_path).with_context(|| {
         format!(
             "failed to read embedded manifest from wasm artifact {}",
@@ -204,7 +202,10 @@ pub fn install_project(project_root: &Path, definition_path: &Path) -> Result<Ac
             .and_then(|b| b.output.as_ref())
             .map(|o| project_root.join(o))
             .unwrap_or_else(|| {
-                project_root.join("target").join("wasm32-wasip1").join("release")
+                project_root
+                    .join("target")
+                    .join("wasm32-wasip1")
+                    .join("release")
             });
 
         let src_wasm = build_output.join(wasm_name);
@@ -230,10 +231,7 @@ pub fn install_project(project_root: &Path, definition_path: &Path) -> Result<Ac
             detect_built_artifact(project_root, native_build_output, binary_name)
             && is_wasm
         {
-            return install_wasm_artifact(
-                &artifact,
-                project_root.to_string_lossy().into_owned(),
-            );
+            return install_wasm_artifact(&artifact, project_root.to_string_lossy().into_owned());
         }
         // Has build section — run build and copy binary
         let build_command = build

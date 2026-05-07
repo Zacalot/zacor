@@ -1,8 +1,8 @@
-use jiff::{Zoned, Unit};
 use jiff::tz::TimeZone;
+use jiff::{Unit, Zoned};
 use serde_json::Value;
 
-use crate::args::{DefaultArgs, AddArgs, DiffArgs, SeqArgs, RoundArgs, ZonesArgs};
+use crate::args::{AddArgs, DefaultArgs, DiffArgs, RoundArgs, SeqArgs, ZonesArgs};
 use crate::parse::{parse_date, parse_duration, resolve_timezone};
 use crate::records::{DateRecord, DiffRecord, ZoneRecord};
 
@@ -132,10 +132,16 @@ pub fn cmd_round(args: &RoundArgs) -> Result<Vec<Value>, String> {
         "year" => {
             let d = zoned.datetime().date();
             let tz = zoned.time_zone().clone();
-            let mid_year = jiff::civil::date(d.year(), 7, 1).to_zoned(tz.clone())
+            let mid_year = jiff::civil::date(d.year(), 7, 1)
+                .to_zoned(tz.clone())
                 .map_err(|e| format!("date round failed: {e}"))?;
-            let target_year = if zoned >= mid_year { d.year() + 1 } else { d.year() };
-            jiff::civil::date(target_year, 1, 1).to_zoned(tz)
+            let target_year = if zoned >= mid_year {
+                d.year() + 1
+            } else {
+                d.year()
+            };
+            jiff::civil::date(target_year, 1, 1)
+                .to_zoned(tz)
                 .map_err(|e| format!("date round failed: {e}"))?
         }
         "month" => {
@@ -143,7 +149,9 @@ pub fn cmd_round(args: &RoundArgs) -> Result<Vec<Value>, String> {
             let tz = zoned.time_zone().clone();
             let days_in_month = d.days_in_month();
             let mid_day = (days_in_month / 2) + 1;
-            let (target_year, target_month) = if d.day() >= mid_day || (d.day() == mid_day - 1 && zoned.datetime().time().hour() >= 12) {
+            let (target_year, target_month) = if d.day() >= mid_day
+                || (d.day() == mid_day - 1 && zoned.datetime().time().hour() >= 12)
+            {
                 if d.month() == 12 {
                     (d.year() + 1, 1)
                 } else {
@@ -152,7 +160,8 @@ pub fn cmd_round(args: &RoundArgs) -> Result<Vec<Value>, String> {
             } else {
                 (d.year(), d.month())
             };
-            jiff::civil::date(target_year, target_month, 1).to_zoned(tz)
+            jiff::civil::date(target_year, target_month, 1)
+                .to_zoned(tz)
                 .map_err(|e| format!("date round failed: {e}"))?
         }
         "week" | "day" | "hour" | "minute" | "second" => {
@@ -165,10 +174,18 @@ pub fn cmd_round(args: &RoundArgs) -> Result<Vec<Value>, String> {
                 _ => unreachable!(),
             };
             zoned
-                .round(jiff::ZonedRound::new().smallest(unit).mode(jiff::RoundMode::HalfExpand))
+                .round(
+                    jiff::ZonedRound::new()
+                        .smallest(unit)
+                        .mode(jiff::RoundMode::HalfExpand),
+                )
                 .map_err(|e| format!("date round failed: {e}"))?
         }
-        other => return Err(format!("date round: unknown unit '{other}'. Valid: year, month, week, day, hour, minute, second")),
+        other => {
+            return Err(format!(
+                "date round: unknown unit '{other}'. Valid: year, month, week, day, hour, minute, second"
+            ));
+        }
     };
 
     let record = DateRecord::from_zoned(&rounded);
@@ -190,7 +207,11 @@ pub fn cmd_zones(_args: &ZonesArgs) -> Result<Vec<Value>, String> {
         let offset = zoned.offset();
         let offset_str = {
             let raw = format!("{offset}");
-            if raw.len() == 3 { format!("{raw}:00") } else { raw }
+            if raw.len() == 3 {
+                format!("{raw}:00")
+            } else {
+                raw
+            }
         };
 
         let abbr = {
@@ -230,12 +251,15 @@ pub fn cmd_zones(_args: &ZonesArgs) -> Result<Vec<Value>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
     use serde_json::json;
+    use std::collections::BTreeMap;
+    use zacor_package::FromArgs;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 
@@ -440,9 +464,7 @@ mod tests {
     fn zones_contains_known() {
         let args: ZonesArgs = make_args(&[]);
         let result = cmd_zones(&args).unwrap();
-        let names: Vec<&str> = result.iter()
-            .filter_map(|v| v["name"].as_str())
-            .collect();
+        let names: Vec<&str> = result.iter().filter_map(|v| v["name"].as_str()).collect();
         assert!(names.contains(&"America/New_York"));
         assert!(names.contains(&"Europe/London"));
         assert!(names.contains(&"Asia/Tokyo"));

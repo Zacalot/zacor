@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::BufRead;
 
 zacor_package::include_args!();
@@ -129,36 +129,41 @@ pub fn cmd_compact(
     let reader = input.ok_or("filter compact: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let fields: Vec<&str> = args.fields.as_deref()
+    let fields: Vec<&str> = args
+        .fields
+        .as_deref()
         .map(|s| zacor_package::parse_field_list(s))
         .unwrap_or_default();
 
     let check_empty = args.empty;
 
-    let output: Vec<Value> = records.into_iter().filter(|record| {
-        if fields.is_empty() {
-            // No fields specified: remove null records
-            if record.is_null() {
-                return false;
-            }
-            if check_empty {
-                return !is_empty_value(record);
-            }
-            true
-        } else {
-            // Check specified fields
-            for &field in &fields {
-                if let Value::Object(map) = record {
-                    match map.get(field) {
-                        None | Some(Value::Null) => return false,
-                        Some(v) if check_empty && is_empty_value(v) => return false,
-                        _ => {}
+    let output: Vec<Value> = records
+        .into_iter()
+        .filter(|record| {
+            if fields.is_empty() {
+                // No fields specified: remove null records
+                if record.is_null() {
+                    return false;
+                }
+                if check_empty {
+                    return !is_empty_value(record);
+                }
+                true
+            } else {
+                // Check specified fields
+                for &field in &fields {
+                    if let Value::Object(map) = record {
+                        match map.get(field) {
+                            None | Some(Value::Null) => return false,
+                            Some(v) if check_empty && is_empty_value(v) => return false,
+                            _ => {}
+                        }
                     }
                 }
+                true
             }
-            true
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
@@ -170,7 +175,9 @@ pub fn cmd_find(
     let reader = input.ok_or("filter find: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let columns: Vec<&str> = args.columns.as_deref()
+    let columns: Vec<&str> = args
+        .columns
+        .as_deref()
         .map(|s| zacor_package::parse_field_list(s))
         .unwrap_or_default();
 
@@ -185,50 +192,54 @@ pub fn cmd_find(
         None
     };
 
-    let output: Vec<Value> = records.into_iter().filter(|record| {
-        let matched = match record {
-            Value::Object(map) => {
-                let fields_to_search: Box<dyn Iterator<Item = (&String, &Value)>> = if columns.is_empty() {
-                    Box::new(map.iter())
-                } else {
-                    Box::new(map.iter().filter(|(k, _)| columns.contains(&k.as_str())))
-                };
+    let output: Vec<Value> = records
+        .into_iter()
+        .filter(|record| {
+            let matched = match record {
+                Value::Object(map) => {
+                    let fields_to_search: Box<dyn Iterator<Item = (&String, &Value)>> =
+                        if columns.is_empty() {
+                            Box::new(map.iter())
+                        } else {
+                            Box::new(map.iter().filter(|(k, _)| columns.contains(&k.as_str())))
+                        };
 
-                fields_to_search.into_iter().any(|(_, v)| {
-                    if let Value::String(s) = v {
-                        match &re {
-                            Some(re) => re.is_match(s),
-                            None => {
-                                if args.ignore_case {
-                                    s.to_lowercase().contains(&args.term.to_lowercase())
-                                } else {
-                                    s.contains(&args.term)
+                    fields_to_search.into_iter().any(|(_, v)| {
+                        if let Value::String(s) = v {
+                            match &re {
+                                Some(re) => re.is_match(s),
+                                None => {
+                                    if args.ignore_case {
+                                        s.to_lowercase().contains(&args.term.to_lowercase())
+                                    } else {
+                                        s.contains(&args.term)
+                                    }
                                 }
                             }
+                        } else {
+                            false
                         }
-                    } else {
-                        false
-                    }
-                })
-            }
-            _ => false,
-        };
+                    })
+                }
+                _ => false,
+            };
 
-        if args.invert { !matched } else { matched }
-    }).collect();
+            if args.invert { !matched } else { matched }
+        })
+        .collect();
 
     Ok(output)
 }
 
 fn extract_key(record: &Value, fields: &[&str]) -> String {
-    fields.iter()
-        .map(|f| {
-            match record {
-                Value::Object(map) => map.get(*f)
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "null".to_string()),
-                _ => "null".to_string(),
-            }
+    fields
+        .iter()
+        .map(|f| match record {
+            Value::Object(map) => map
+                .get(*f)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".to_string()),
+            _ => "null".to_string(),
         })
         .collect::<Vec<_>>()
         .join("\0")
@@ -241,7 +252,8 @@ fn values_equal_ignore_case(a: &Value, b: &Value) -> bool {
                 return false;
             }
             ma.iter().all(|(k, va)| {
-                mb.get(k).map_or(false, |vb| values_equal_ignore_case(va, vb))
+                mb.get(k)
+                    .map_or(false, |vb| values_equal_ignore_case(va, vb))
             })
         }
         (Value::String(sa), Value::String(sb)) => sa.to_lowercase() == sb.to_lowercase(),
@@ -263,12 +275,15 @@ fn is_empty_value(v: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 
@@ -343,7 +358,8 @@ mod tests {
     #[test]
     fn uniq_by_keep_last() {
         let data = r#"[{"name":"a","v":1},{"name":"a","v":2},{"name":"b","v":3}]"#;
-        let args: args::UniqByArgs = make_args(&[("fields", json!("name")), ("keep-last", json!(true))]);
+        let args: args::UniqByArgs =
+            make_args(&[("fields", json!("name")), ("keep-last", json!(true))]);
         let result = cmd_uniq_by(&args, json_input(data)).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0]["v"], 2);
@@ -413,7 +429,8 @@ mod tests {
     #[test]
     fn find_ignore_case() {
         let data = r#"[{"name":"FooBar"},{"name":"baz"}]"#;
-        let args: args::FindArgs = make_args(&[("term", json!("foo")), ("ignore-case", json!(true))]);
+        let args: args::FindArgs =
+            make_args(&[("term", json!("foo")), ("ignore-case", json!(true))]);
         let result = cmd_find(&args, json_input(data)).unwrap();
         assert_eq!(result.len(), 1);
     }

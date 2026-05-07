@@ -38,9 +38,9 @@ pub fn head(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
     use serde_json::json;
+    use std::collections::BTreeMap;
+    use zacor_package::FromArgs;
 
     #[test]
     fn from_args_optional_missing() {

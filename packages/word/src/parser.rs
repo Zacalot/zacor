@@ -98,7 +98,11 @@ fn parse_gloss(gloss: &str) -> (String, Vec<String>) {
     // Find first quoted example
     let definition;
     if let Some(quote_pos) = gloss.find('"') {
-        definition = gloss[..quote_pos].trim().trim_end_matches(';').trim().to_string();
+        definition = gloss[..quote_pos]
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .to_string();
         // Extract all quoted strings
         let mut chars = gloss[quote_pos..].chars().peekable();
         while let Some(&c) = chars.peek() {
@@ -160,7 +164,9 @@ pub fn parse_index_sense(text: &str) -> Vec<(String, Vec<(POS, SynsetId)>)> {
             };
             if let Some(pos) = POS::from_sense_type(ss_type) {
                 let normalized = lemma.to_lowercase();
-                map.entry(normalized).or_default().push((pos, SynsetId(synset_offset)));
+                map.entry(normalized)
+                    .or_default()
+                    .push((pos, SynsetId(synset_offset)));
             }
         }
     }
@@ -274,8 +280,7 @@ mod tests {
 
     #[test]
     fn test_parse_gloss_with_examples() {
-        let (def, examples) =
-            parse_gloss(r#"a brave person; "he was brave"; "she is courageous""#);
+        let (def, examples) = parse_gloss(r#"a brave person; "he was brave"; "she is courageous""#);
         assert_eq!(def, "a brave person");
         assert_eq!(examples.len(), 2);
         assert_eq!(examples[0], "he was brave");
@@ -311,7 +316,10 @@ mod tests {
     fn test_index_lookup() {
         let index = vec![
             ("able".to_string(), vec![(POS::Adj, SynsetId(1740))]),
-            ("bank".to_string(), vec![(POS::Noun, SynsetId(100)), (POS::Verb, SynsetId(200))]),
+            (
+                "bank".to_string(),
+                vec![(POS::Noun, SynsetId(100)), (POS::Verb, SynsetId(200))],
+            ),
             ("dog".to_string(), vec![(POS::Noun, SynsetId(300))]),
         ];
         assert!(index_lookup(&index, "bank").is_some());

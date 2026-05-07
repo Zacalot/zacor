@@ -227,7 +227,8 @@ pub(crate) fn invoke_package(
     args: std::collections::BTreeMap<String, String>,
 ) -> io::Result<(Vec<serde_json::Value>, i32)> {
     let mut records = Vec::new();
-    let exit_code = invoke_package_streaming(package, command, args, |record| records.push(record))?;
+    let exit_code =
+        invoke_package_streaming(package, command, args, |record| records.push(record))?;
     Ok((records, exit_code))
 }
 

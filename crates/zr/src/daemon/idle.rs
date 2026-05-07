@@ -4,11 +4,11 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::module_cache::{stop_warm_library_instance, LibraryPool};
+use super::module_cache::{LibraryPool, stop_warm_library_instance};
 use super::service_supervisor::subprocess::{backoff_duration, check_health, wait_for_health};
 use super::service_supervisor::{ManagedKind, ManagedService, ServiceState};
 use super::{
-    DaemonControl, DAEMON_PORT, DEFAULT_DRAIN_TIMEOUT_SECS, DEFAULT_IDLE_TIMEOUT_SECS,
+    DAEMON_PORT, DEFAULT_DRAIN_TIMEOUT_SECS, DEFAULT_IDLE_TIMEOUT_SECS, DaemonControl,
     HEALTH_CHECK_INTERVAL, HEALTH_CHECK_TIMEOUT, MAX_RESTART_FAILURES,
 };
 
@@ -44,7 +44,10 @@ pub(super) fn health_monitor_loop(
         reap_idle_library_instances(&library_pools);
         let library_pool_count = {
             let pools = library_pools.lock().unwrap();
-            pools.values().map(|pool| pool.instances.len()).sum::<usize>()
+            pools
+                .values()
+                .map(|pool| pool.instances.len())
+                .sum::<usize>()
         };
 
         if names.is_empty()
@@ -207,7 +210,8 @@ fn reap_idle_library_instances(library_pools: &Arc<Mutex<HashMap<String, Library
             let mut retained = Vec::new();
             for instance in pool.instances.drain(..) {
                 let idle = instance.last_used.lock().unwrap().elapsed();
-                if !instance.busy.load(std::sync::atomic::Ordering::Acquire) && idle >= idle_timeout {
+                if !instance.busy.load(std::sync::atomic::Ordering::Acquire) && idle >= idle_timeout
+                {
                     to_stop.push(instance);
                 } else {
                     retained.push(instance);

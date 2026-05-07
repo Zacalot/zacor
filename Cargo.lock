@@ -5815,6 +5815,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "zr-dispatch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "chrono",
+ "clap",
+ "comfy-table",
+ "humansize",
+ "ignore",
+ "serde",
+ "serde_json",
+ "serde_yml",
+ "shlex",
+ "tempfile",
+ "timeago",
+ "windows-sys 0.52.0",
+ "zacor-host",
+ "zacor-package",
+]
+
+[[package]]
 name = "zr-echo"
 version = "0.2.0"
 dependencies = [
@@ -6102,6 +6124,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "zacor-host",
+ "zr-dispatch",
 ]
 
 [[package]]

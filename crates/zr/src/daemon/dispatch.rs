@@ -8,7 +8,7 @@ use zacor_host::protocol::DaemonRefusal;
 use zacor_package::protocol::{self as proto, Message};
 
 use super::module_cache::{
-    acquire_warm_library_instance, proxy_library_invoke, release_warm_library_instance, LibraryPool,
+    LibraryPool, acquire_warm_library_instance, proxy_library_invoke, release_warm_library_instance,
 };
 use super::{DaemonControl, DaemonRequest};
 
@@ -32,10 +32,7 @@ pub(super) fn handle_dispatch(
             client: client_version.clone(),
         };
         control.begin_dispatch_drain(refusal.clone());
-        let result = send_ack_err(
-            &mut stream,
-            refusal,
-        );
+        let result = send_ack_err(&mut stream, refusal);
         return result;
     }
 
@@ -47,7 +44,7 @@ pub(super) fn handle_dispatch(
                 DaemonRefusal::InvalidRequest {
                     reason: "dispatch: pkg_name required".into(),
                 },
-            )
+            );
         }
     };
     let version = match req.version {
@@ -58,7 +55,7 @@ pub(super) fn handle_dispatch(
                 DaemonRefusal::InvalidRequest {
                     reason: "dispatch: version required".into(),
                 },
-            )
+            );
         }
     };
 
@@ -104,7 +101,7 @@ pub(super) fn handle_dispatch(
                 DaemonRefusal::LoadFailed {
                     reason: format!("wasm host: {:#}", e),
                 },
-            )
+            );
         }
     };
     let module = match host.load_module(&wasm_path) {
@@ -128,7 +125,7 @@ pub(super) fn handle_dispatch(
                 DaemonRefusal::LoadFailed {
                     reason: format!("invoke: {:#}", e),
                 },
-            )
+            );
         }
     };
 
@@ -141,7 +138,9 @@ pub(super) fn handle_dispatch(
         controller,
     } = session;
 
-    let shutdown_handle = stream.try_clone().context("cloning stream for shutdown handle")?;
+    let shutdown_handle = stream
+        .try_clone()
+        .context("cloning stream for shutdown handle")?;
 
     let tcp_to_wasm = std::thread::Builder::new()
         .name("zr-daemon-tcp-to-wasm".into())
@@ -188,10 +187,7 @@ pub(super) fn handle_library_invoke(
             client: client_version.clone(),
         };
         control.begin_dispatch_drain(refusal.clone());
-        let result = send_ack_err(
-            &mut stream,
-            refusal,
-        );
+        let result = send_ack_err(&mut stream, refusal);
         return result;
     }
 
@@ -203,7 +199,7 @@ pub(super) fn handle_library_invoke(
                 DaemonRefusal::InvalidRequest {
                     reason: "invoke-library: pkg_name required".into(),
                 },
-            )
+            );
         }
     };
     let version = match req.version {
@@ -214,7 +210,7 @@ pub(super) fn handle_library_invoke(
                 DaemonRefusal::InvalidRequest {
                     reason: "invoke-library: version required".into(),
                 },
-            )
+            );
         }
     };
     let command = match req.command {
@@ -225,7 +221,7 @@ pub(super) fn handle_library_invoke(
                 DaemonRefusal::InvalidRequest {
                     reason: "invoke-library: command required".into(),
                 },
-            )
+            );
         }
     };
 
@@ -237,7 +233,7 @@ pub(super) fn handle_library_invoke(
                 DaemonRefusal::LoadFailed {
                     reason: format!("load manifest for '{}' v{}: {:#}", pkg_name, version, error),
                 },
-            )
+            );
         }
     };
 
@@ -249,7 +245,7 @@ pub(super) fn handle_library_invoke(
                 DaemonRefusal::InvalidRequest {
                     reason: format!("'{}' is not a library service package", pkg_name),
                 },
-            )
+            );
         }
     };
 
@@ -269,7 +265,7 @@ pub(super) fn handle_library_invoke(
                 DaemonRefusal::LoadFailed {
                     reason: format!("warm library instance: {:#}", error),
                 },
-            )
+            );
         }
     };
 
@@ -285,7 +281,10 @@ pub(super) fn handle_library_invoke(
 fn refusal_message(refusal: &DaemonRefusal) -> String {
     match refusal {
         DaemonRefusal::VersionMismatch { daemon, client } => {
-            format!("daemon version mismatch: daemon={}, client={} - daemon will exit", daemon, client)
+            format!(
+                "daemon version mismatch: daemon={}, client={} - daemon will exit",
+                daemon, client
+            )
         }
         DaemonRefusal::PackageNotFound { name } => format!("package not found: {}", name),
         DaemonRefusal::WasmArtifactMissing { path } => format!("wasm artifact missing: {}", path),

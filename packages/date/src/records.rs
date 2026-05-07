@@ -101,9 +101,7 @@ impl DateRecord {
         // DST detection: compare with standard offset
         let is_dst = {
             // Create a date in January (likely standard time) to compare offsets
-            let jan = jiff::civil::date(d.year(), 1, 1)
-                .to_zoned(tz.clone())
-                .ok();
+            let jan = jiff::civil::date(d.year(), 1, 1).to_zoned(tz.clone()).ok();
             match jan {
                 Some(jan_zoned) => zoned.offset() != jan_zoned.offset(),
                 None => false,
@@ -190,31 +188,59 @@ impl DiffRecord {
         let mut parts = Vec::new();
         if years != 0 {
             let abs = years.abs();
-            parts.push(if abs == 1 { format!("{abs} year") } else { format!("{abs} years") });
+            parts.push(if abs == 1 {
+                format!("{abs} year")
+            } else {
+                format!("{abs} years")
+            });
         }
         if months != 0 {
             let abs = months.abs();
-            parts.push(if abs == 1 { format!("{abs} month") } else { format!("{abs} months") });
+            parts.push(if abs == 1 {
+                format!("{abs} month")
+            } else {
+                format!("{abs} months")
+            });
         }
         if weeks != 0 {
             let abs = weeks.abs();
-            parts.push(if abs == 1 { format!("{abs} week") } else { format!("{abs} weeks") });
+            parts.push(if abs == 1 {
+                format!("{abs} week")
+            } else {
+                format!("{abs} weeks")
+            });
         }
         if days != 0 {
             let abs = days.abs();
-            parts.push(if abs == 1 { format!("{abs} day") } else { format!("{abs} days") });
+            parts.push(if abs == 1 {
+                format!("{abs} day")
+            } else {
+                format!("{abs} days")
+            });
         }
         if hours != 0 {
             let abs = hours.abs();
-            parts.push(if abs == 1 { format!("{abs} hour") } else { format!("{abs} hours") });
+            parts.push(if abs == 1 {
+                format!("{abs} hour")
+            } else {
+                format!("{abs} hours")
+            });
         }
         if minutes != 0 {
             let abs = minutes.abs();
-            parts.push(if abs == 1 { format!("{abs} minute") } else { format!("{abs} minutes") });
+            parts.push(if abs == 1 {
+                format!("{abs} minute")
+            } else {
+                format!("{abs} minutes")
+            });
         }
         if seconds != 0 || parts.is_empty() {
             let abs = seconds.abs();
-            parts.push(if abs == 1 { format!("{abs} second") } else { format!("{abs} seconds") });
+            parts.push(if abs == 1 {
+                format!("{abs} second")
+            } else {
+                format!("{abs} seconds")
+            });
         }
         let is_negative = total_secs < 0;
         let humanized = if is_negative {
@@ -254,7 +280,8 @@ fn format_iso8601_duration(
     minutes: i64,
     seconds: i64,
 ) -> String {
-    let is_negative = years < 0 || months < 0 || weeks < 0 || days < 0 || hours < 0 || minutes < 0 || seconds < 0;
+    let is_negative =
+        years < 0 || months < 0 || weeks < 0 || days < 0 || hours < 0 || minutes < 0 || seconds < 0;
     let prefix = if is_negative { "-P" } else { "P" };
     let mut date_part = String::new();
     let mut time_part = String::new();
@@ -267,14 +294,28 @@ fn format_iso8601_duration(
     let mi = minutes.unsigned_abs();
     let s = seconds.unsigned_abs();
 
-    if y > 0 { date_part.push_str(&format!("{y}Y")); }
-    if mo > 0 { date_part.push_str(&format!("{mo}M")); }
-    if w > 0 { date_part.push_str(&format!("{w}W")); }
-    if d > 0 { date_part.push_str(&format!("{d}D")); }
+    if y > 0 {
+        date_part.push_str(&format!("{y}Y"));
+    }
+    if mo > 0 {
+        date_part.push_str(&format!("{mo}M"));
+    }
+    if w > 0 {
+        date_part.push_str(&format!("{w}W"));
+    }
+    if d > 0 {
+        date_part.push_str(&format!("{d}D"));
+    }
 
-    if h > 0 { time_part.push_str(&format!("{h}H")); }
-    if mi > 0 { time_part.push_str(&format!("{mi}M")); }
-    if s > 0 { time_part.push_str(&format!("{s}S")); }
+    if h > 0 {
+        time_part.push_str(&format!("{h}H"));
+    }
+    if mi > 0 {
+        time_part.push_str(&format!("{mi}M"));
+    }
+    if s > 0 {
+        time_part.push_str(&format!("{s}S"));
+    }
 
     if date_part.is_empty() && time_part.is_empty() {
         return "P0D".to_string();
@@ -331,11 +372,23 @@ mod tests {
 
     #[test]
     fn date_record_quarter_boundaries() {
-        for (month, expected_q) in [(1, 1), (3, 1), (4, 2), (6, 2), (7, 3), (9, 3), (10, 4), (12, 4)] {
+        for (month, expected_q) in [
+            (1, 1),
+            (3, 1),
+            (4, 2),
+            (6, 2),
+            (7, 3),
+            (9, 3),
+            (10, 4),
+            (12, 4),
+        ] {
             let date_str = format!("2026-{month:02}-01T00:00:00[UTC]");
             let zoned: Zoned = date_str.parse().unwrap();
             let rec = DateRecord::from_zoned(&zoned);
-            assert_eq!(rec.quarter, expected_q, "month {month} should be Q{expected_q}");
+            assert_eq!(
+                rec.quarter, expected_q,
+                "month {month} should be Q{expected_q}"
+            );
         }
     }
 

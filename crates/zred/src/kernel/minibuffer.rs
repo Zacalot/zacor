@@ -4,10 +4,10 @@ pub enum MinibufferMode {
     Command,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Minibuffer {
-    pub mode: MinibufferMode,
-    pub input: String,
+    mode: MinibufferMode,
+    input: String,
 }
 
 impl Minibuffer {
@@ -23,5 +23,17 @@ impl Minibuffer {
             mode: MinibufferMode::Command,
             input: String::new(),
         }
+    }
+
+    pub fn mode(&self) -> MinibufferMode {
+        self.mode
+    }
+
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+
+    pub fn input_mut(&mut self) -> &mut String {
+        &mut self.input
     }
 }

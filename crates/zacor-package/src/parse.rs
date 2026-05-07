@@ -24,9 +24,8 @@ pub fn tree_sitter(source: &str, ext: &str, rel_path: &str) -> io::Result<Vec<De
 
     crate::invoke("treesitter", "parse", &args)?
         .map(|value| {
-            serde_json::from_value(value).map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("decl parse: {e}"))
-            })
+            serde_json::from_value(value)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("decl parse: {e}")))
         })
         .collect()
 }

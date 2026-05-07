@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::io::BufRead;
 
@@ -6,31 +6,58 @@ zacor_package::include_args!();
 
 // ─── Aggregation commands ───────────────────────────────────────────
 
-pub fn cmd_sum(args: &args::SumArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    aggregate(args.field.as_deref(), input, |vals| if vals.is_empty() { 0.0 } else { vals.iter().sum() })
-}
-
-pub fn cmd_avg(args: &args::AvgArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
-    aggregate_nullable(args.field.as_deref(), input, |vals| {
-        if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+pub fn cmd_sum(
+    args: &args::SumArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
+    aggregate(args.field.as_deref(), input, |vals| {
+        if vals.is_empty() {
+            0.0
+        } else {
+            vals.iter().sum()
+        }
     })
 }
 
-pub fn cmd_min(args: &args::MinArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_avg(
+    args: &args::AvgArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
+    aggregate_nullable(args.field.as_deref(), input, |vals| {
+        if vals.is_empty() {
+            None
+        } else {
+            Some(vals.iter().sum::<f64>() / vals.len() as f64)
+        }
+    })
+}
+
+pub fn cmd_min(
+    args: &args::MinArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     aggregate_nullable(args.field.as_deref(), input, |vals| {
         vals.iter().cloned().reduce(f64::min)
     })
 }
 
-pub fn cmd_max(args: &args::MaxArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_max(
+    args: &args::MaxArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     aggregate_nullable(args.field.as_deref(), input, |vals| {
         vals.iter().cloned().reduce(f64::max)
     })
 }
 
-pub fn cmd_median(args: &args::MedianArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_median(
+    args: &args::MedianArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     aggregate_nullable(args.field.as_deref(), input, |vals| {
-        if vals.is_empty() { return None; }
+        if vals.is_empty() {
+            return None;
+        }
         let mut sorted = vals.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let mid = sorted.len() / 2;
@@ -42,33 +69,52 @@ pub fn cmd_median(args: &args::MedianArgs, input: Option<Box<dyn BufRead>>) -> R
     })
 }
 
-pub fn cmd_mode(args: &args::ModeArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_mode(
+    args: &args::ModeArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     aggregate_nullable(args.field.as_deref(), input, |vals| {
-        if vals.is_empty() { return None; }
+        if vals.is_empty() {
+            return None;
+        }
         let mut counts: HashMap<u64, usize> = HashMap::new();
         for &v in vals {
             *counts.entry(v.to_bits()).or_insert(0) += 1;
         }
-        counts.into_iter()
+        counts
+            .into_iter()
             .max_by_key(|&(_, count)| count)
             .map(|(bits, _)| f64::from_bits(bits))
     })
 }
 
-pub fn cmd_product(args: &args::ProductArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_product(
+    args: &args::ProductArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     aggregate(args.field.as_deref(), input, |vals| {
-        if vals.is_empty() { 1.0 } else { vals.iter().product() }
+        if vals.is_empty() {
+            1.0
+        } else {
+            vals.iter().product()
+        }
     })
 }
 
-pub fn cmd_stddev(args: &args::StddevArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_stddev(
+    args: &args::StddevArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let sample = args.sample;
     aggregate_nullable(args.field.as_deref(), input, move |vals| {
         variance_impl(vals, sample).map(|v| v.sqrt())
     })
 }
 
-pub fn cmd_variance(args: &args::VarianceArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_variance(
+    args: &args::VarianceArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let sample = args.sample;
     aggregate_nullable(args.field.as_deref(), input, move |vals| {
         variance_impl(vals, sample)
@@ -77,15 +123,22 @@ pub fn cmd_variance(args: &args::VarianceArgs, input: Option<Box<dyn BufRead>>) 
 
 fn variance_impl(vals: &[f64], sample: bool) -> Option<f64> {
     let n = vals.len();
-    if n == 0 { return None; }
+    if n == 0 {
+        return None;
+    }
     let denom = if sample { n - 1 } else { n };
-    if denom == 0 { return None; }
+    if denom == 0 {
+        return None;
+    }
     let mean = vals.iter().sum::<f64>() / n as f64;
     let sum_sq: f64 = vals.iter().map(|v| (v - mean).powi(2)).sum();
     Some(sum_sq / denom as f64)
 }
 
-pub fn cmd_count(_args: &args::CountArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_count(
+    _args: &args::CountArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let reader = input.ok_or("math count: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
     Ok(vec![json!({"count": records.len()})])
@@ -93,27 +146,40 @@ pub fn cmd_count(_args: &args::CountArgs, input: Option<Box<dyn BufRead>>) -> Re
 
 // ─── Element-wise commands ──────────────────────────────────────────
 
-pub fn cmd_round(args: &args::RoundArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_round(
+    args: &args::RoundArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let precision = args.precision.max(0) as u32;
     let factor = 10f64.powi(precision as i32);
     element_wise(&args.field, input, |v| {
-        v.as_f64().map(|n| Value::from((n * factor).round() / factor))
+        v.as_f64()
+            .map(|n| Value::from((n * factor).round() / factor))
     })
 }
 
-pub fn cmd_ceil(args: &args::CeilArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_ceil(
+    args: &args::CeilArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     element_wise(&args.field, input, |v| {
         v.as_f64().map(|n| Value::from(n.ceil()))
     })
 }
 
-pub fn cmd_floor(args: &args::FloorArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_floor(
+    args: &args::FloorArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     element_wise(&args.field, input, |v| {
         v.as_f64().map(|n| Value::from(n.floor()))
     })
 }
 
-pub fn cmd_abs(args: &args::AbsArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_abs(
+    args: &args::AbsArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     element_wise(&args.field, input, |v| {
         v.as_f64().map(|n| Value::from(n.abs()))
     })
@@ -183,7 +249,8 @@ fn table_mode_aggregate(records: &[Value], func: impl Fn(&[f64]) -> Value) -> Va
 }
 
 fn extract_numbers(records: &[Value], field: &str) -> Vec<f64> {
-    records.iter()
+    records
+        .iter()
         .filter_map(|r| r.as_object()?.get(field)?.as_f64())
         .collect()
 }
@@ -196,18 +263,21 @@ fn element_wise(
     let reader = input.ok_or("math: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let output: Vec<Value> = records.into_iter().map(|record| {
-        if let Value::Object(mut map) = record {
-            if let Some(val) = map.get(field) {
-                if let Some(new_val) = transform(val) {
-                    map.insert(field.to_string(), new_val);
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            if let Value::Object(mut map) = record {
+                if let Some(val) = map.get(field) {
+                    if let Some(new_val) = transform(val) {
+                        map.insert(field.to_string(), new_val);
+                    }
                 }
+                Value::Object(map)
+            } else {
+                record
             }
-            Value::Object(map)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
@@ -216,12 +286,15 @@ fn element_wise(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 
@@ -250,8 +323,14 @@ mod tests {
         let data = r#"[{"v":5},{"v":1},{"v":9}]"#;
         let min_args: args::MinArgs = make_args(&[("field", json!("v"))]);
         let max_args: args::MaxArgs = make_args(&[("field", json!("v"))]);
-        assert_eq!(cmd_min(&min_args, json_input(data)).unwrap()[0]["value"], 1.0);
-        assert_eq!(cmd_max(&max_args, json_input(data)).unwrap()[0]["value"], 9.0);
+        assert_eq!(
+            cmd_min(&min_args, json_input(data)).unwrap()[0]["value"],
+            1.0
+        );
+        assert_eq!(
+            cmd_max(&max_args, json_input(data)).unwrap()[0]["value"],
+            9.0
+        );
     }
 
     #[test]
@@ -296,7 +375,8 @@ mod tests {
     #[test]
     fn round_with_precision() {
         let data = r#"[{"price":3.14159}]"#;
-        let args: args::RoundArgs = make_args(&[("field", json!("price")), ("precision", json!(2))]);
+        let args: args::RoundArgs =
+            make_args(&[("field", json!("price")), ("precision", json!(2))]);
         let result = cmd_round(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["price"], 3.14);
     }

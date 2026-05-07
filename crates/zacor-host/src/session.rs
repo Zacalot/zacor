@@ -236,9 +236,7 @@ pub fn run_session(
     }
 
     let has_input = matches!(invoke, Message::Invoke(inv) if inv.input);
-    if has_input
-        && let Some(input_source) = input_source
-    {
+    if has_input && let Some(input_source) = input_source {
         while let Some(chunk) = input_source.next_chunk() {
             transport.send(&Message::Input(Input {
                 data: chunk,
@@ -311,7 +309,7 @@ pub fn run_session(
 mod tests {
     use super::*;
     use crate::capability::{CapabilityProvider, CapabilityRegistry};
-    use crate::protocol::{CapabilityError, CapabilityResult, CapabilityRes, Output};
+    use crate::protocol::{CapabilityError, CapabilityRes, CapabilityResult, Output};
     use crate::router::{InvocationOutcome, PackageRouter};
     use serde_json::json;
     use std::sync::Arc;
@@ -353,7 +351,11 @@ mod tests {
             "fs"
         }
 
-        fn handle(&self, op: &str, _params: &serde_json::Value) -> Result<serde_json::Value, CapabilityError> {
+        fn handle(
+            &self,
+            op: &str,
+            _params: &serde_json::Value,
+        ) -> Result<serde_json::Value, CapabilityError> {
             Ok(json!({"op": op}))
         }
     }
@@ -418,7 +420,11 @@ mod tests {
         let mut transport = StdioTransport::new(std::io::Cursor::new(input.as_bytes()), Vec::new());
         let mut registry = CapabilityRegistry::new();
         registry.register(Arc::new(EchoProvider)).unwrap();
-        let invoke = Message::Invoke(crate::protocol::Invoke::from_str_args("default", &std::collections::BTreeMap::new(), false));
+        let invoke = Message::Invoke(crate::protocol::Invoke::from_str_args(
+            "default",
+            &std::collections::BTreeMap::new(),
+            false,
+        ));
         let command = CommandDefinition::default();
         let mut output_handler = TestOutputHandler {
             records: Vec::new(),

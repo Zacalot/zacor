@@ -597,9 +597,10 @@ pub fn resolve_cross_package_templates(prompt: &str) -> Result<String, String> {
 pub fn resolve_cross_package_templates(prompt: &str) -> Result<String, String> {
     // Markers containing `.` are left verbatim; if any remain at runtime,
     // flag the unavailability.
-    if prompt.contains("{{") && regex::Regex::new(r"\{\{[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\}\}")
-        .unwrap()
-        .is_match(prompt)
+    if prompt.contains("{{")
+        && regex::Regex::new(r"\{\{[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\}\}")
+            .unwrap()
+            .is_match(prompt)
     {
         return Err(
             "cross-package template resolution is unavailable under wasm (no subprocess support); \
@@ -1006,14 +1007,16 @@ mod tests {
         )
         .unwrap();
 
-        assert!(tmp
-            .path()
-            .join(".claude/skills/zr-wf-search-web/SKILL.md")
-            .exists());
-        assert!(tmp
-            .path()
-            .join(".gemini/skills/zr-wf-search-web/SKILL.md")
-            .exists());
+        assert!(
+            tmp.path()
+                .join(".claude/skills/zr-wf-search-web/SKILL.md")
+                .exists()
+        );
+        assert!(
+            tmp.path()
+                .join(".gemini/skills/zr-wf-search-web/SKILL.md")
+                .exists()
+        );
     }
 
     // --- Runtime handlers ---

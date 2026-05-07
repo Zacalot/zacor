@@ -181,14 +181,18 @@ fn render_inferred_table(records: &[Value], writer: &mut impl Write) {
     }
 
     if records.len() == 1 {
-        render_record(&records[0], &OutputDeclaration {
-            output_type: Some(OutputType::Record),
-            cardinality: None,
-            display: None,
-            field: None,
-            stream: false,
-            schema: None,
-        }, writer);
+        render_record(
+            &records[0],
+            &OutputDeclaration {
+                output_type: Some(OutputType::Record),
+                cardinality: None,
+                display: None,
+                field: None,
+                stream: false,
+                schema: None,
+            },
+            writer,
+        );
         return;
     }
 

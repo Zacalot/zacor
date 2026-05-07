@@ -3,10 +3,7 @@ use std::io::BufRead;
 
 zacor_package::include_args!();
 
-pub fn last(
-    count: i64,
-    input: Box<dyn BufRead>,
-) -> Result<Vec<Value>, String> {
+pub fn last(count: i64, input: Box<dyn BufRead>) -> Result<Vec<Value>, String> {
     let n = count.max(0) as usize;
     let records = zacor_package::parse_records(input)?;
     let len = records.len();

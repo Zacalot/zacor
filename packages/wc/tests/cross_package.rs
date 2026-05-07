@@ -14,23 +14,13 @@ fn wc_and_cat_library_calls() {
     std::fs::write(&file, "hello world\nfoo bar baz\n").unwrap();
 
     // Call cat as a library — no process spawn
-    let records: Vec<_> = zr_cat::cat(
-        Some(file.clone()),
-        None,
-        None,
-        empty_input(),
-    )
-    .unwrap();
+    let records: Vec<_> = zr_cat::cat(Some(file.clone()), None, None, empty_input()).unwrap();
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].content, "hello world");
     assert_eq!(records[1].content, "foo bar baz");
 
     // Call wc as a library — no process spawn
-    let result = zr_wc::wc(
-        Some(file.clone()),
-        empty_input(),
-    )
-    .unwrap();
+    let result = zr_wc::wc(Some(file.clone()), empty_input()).unwrap();
     assert_eq!(result.lines, 2);
     assert_eq!(result.words, 5);
 

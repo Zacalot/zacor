@@ -23,11 +23,16 @@ impl CapabilityProvider for PromptProvider {
             )));
         }
 
-        let message = params.get("message").and_then(|value| value.as_str()).unwrap_or("");
+        let message = params
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
         match op {
             "confirm" => {
                 eprint!("{} [y/N] ", message);
-                std::io::stderr().flush().map_err(|error| CapabilityError::from_io(&error))?;
+                std::io::stderr()
+                    .flush()
+                    .map_err(|error| CapabilityError::from_io(&error))?;
                 let mut line = String::new();
                 std::io::stdin()
                     .read_line(&mut line)
@@ -51,7 +56,9 @@ impl CapabilityProvider for PromptProvider {
                     eprintln!("  {}) {}", index + 1, option);
                 }
                 eprint!("Choice: ");
-                std::io::stderr().flush().map_err(|error| CapabilityError::from_io(&error))?;
+                std::io::stderr()
+                    .flush()
+                    .map_err(|error| CapabilityError::from_io(&error))?;
 
                 let mut line = String::new();
                 std::io::stdin()
@@ -72,7 +79,9 @@ impl CapabilityProvider for PromptProvider {
             }
             "text" => {
                 eprint!("{}: ", message);
-                std::io::stderr().flush().map_err(|error| CapabilityError::from_io(&error))?;
+                std::io::stderr()
+                    .flush()
+                    .map_err(|error| CapabilityError::from_io(&error))?;
                 let mut line = String::new();
                 std::io::stdin()
                     .read_line(&mut line)

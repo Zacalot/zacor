@@ -1,9 +1,9 @@
 use crate::args::RandomArgs;
 use crate::models::*;
 use crate::wordnet::WordNet;
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 use serde_json::Value;
 use zacor_package::json;
 

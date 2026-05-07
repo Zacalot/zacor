@@ -12,8 +12,8 @@ pub struct LsRecord {
 }
 
 pub fn ls(path: PathBuf, all: bool) -> Result<Vec<LsRecord>, String> {
-    let mut entries = zr_fs::read_dir(&path)
-        .map_err(|e| format!("ls: {}: {}", path.display(), e))?;
+    let mut entries =
+        zr_fs::read_dir(&path).map_err(|e| format!("ls: {}: {}", path.display(), e))?;
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -40,9 +40,9 @@ pub fn ls(path: PathBuf, all: bool) -> Result<Vec<LsRecord>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
     use serde_json::json;
+    use std::collections::BTreeMap;
+    use zacor_package::FromArgs;
 
     #[test]
     fn from_args_bool_true() {

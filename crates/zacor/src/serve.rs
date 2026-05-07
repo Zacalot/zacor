@@ -19,8 +19,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc as sync_mpsc;
 use std::sync::Arc;
+use std::sync::mpsc as sync_mpsc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zacor_host::session::{ChannelTransport, StdioTransport, Transport};
@@ -373,7 +373,13 @@ fn start_session(
     std::thread::Builder::new()
         .name("protocol-session".into())
         .spawn(move || {
-            let _ = serve_protocol_session(child_stdout, child_stdin, invoke_msg, transport_tx, respond_rx);
+            let _ = serve_protocol_session(
+                child_stdout,
+                child_stdin,
+                invoke_msg,
+                transport_tx,
+                respond_rx,
+            );
             let _ = child.wait();
             sessions.lock().unwrap().remove(&sid);
         })

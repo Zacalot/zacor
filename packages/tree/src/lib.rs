@@ -12,8 +12,7 @@ pub struct TreeRecord {
 }
 
 pub fn tree(path: &Path, depth: Option<usize>) -> Result<Vec<TreeRecord>, String> {
-    let meta = fs::stat(path)
-        .map_err(|e| format!("tree: stat '{}': {}", path.display(), e))?;
+    let meta = fs::stat(path).map_err(|e| format!("tree: stat '{}': {}", path.display(), e))?;
     if meta.file_type != FileType::Dir {
         return Err(format!("tree: '{}' is not a directory", path.display()));
     }
@@ -169,6 +168,10 @@ mod tests {
         let result = tree(tmp.path(), None).unwrap();
         let lines: Vec<&str> = result.iter().map(|r| r.line.as_str()).collect();
         // Should use box-drawing characters
-        assert!(lines.iter().any(|l| l.contains("├── ") || l.contains("└── ")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("├── ") || l.contains("└── "))
+        );
     }
 }

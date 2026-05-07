@@ -58,8 +58,16 @@ pub fn base64_decode(s: &str) -> Result<Vec<u8>, std::io::Error> {
         let vals = [
             decode_base64_byte(chunk[0])?,
             decode_base64_byte(chunk[1])?,
-            if chunk[2] == b'=' { 0 } else { decode_base64_byte(chunk[2])? },
-            if chunk[3] == b'=' { 0 } else { decode_base64_byte(chunk[3])? },
+            if chunk[2] == b'=' {
+                0
+            } else {
+                decode_base64_byte(chunk[2])?
+            },
+            if chunk[3] == b'=' {
+                0
+            } else {
+                decode_base64_byte(chunk[3])?
+            },
         ];
 
         out.push((vals[0] << 2) | (vals[1] >> 4));

@@ -120,10 +120,11 @@ fn install_kv_binary(home: &Path, version: &str) {
     write_kv_definition(home, version, &binary_name);
     fs::copy(
         &kv_bin,
-        home.join("store")
-            .join("kv")
-            .join(version)
-            .join(format!("{}{}", binary_name, std::env::consts::EXE_SUFFIX)),
+        home.join("store").join("kv").join(version).join(format!(
+            "{}{}",
+            binary_name,
+            std::env::consts::EXE_SUFFIX
+        )),
     )
     .unwrap();
 }
@@ -158,7 +159,10 @@ fn send_version_mismatch_request() {
 
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line).unwrap();
-    assert!(line.contains("version_mismatch") || line.contains("version mismatch"), "ack: {line}");
+    assert!(
+        line.contains("version_mismatch") || line.contains("version mismatch"),
+        "ack: {line}"
+    );
 }
 
 fn start_http_server() -> (std::thread::JoinHandle<()>, String) {
@@ -210,7 +214,10 @@ fn daemon_version_mismatch_drains_then_client_recovers() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("probe") || stdout.contains("ok"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("probe") || stdout.contains("ok"),
+        "stdout: {stdout}"
+    );
 
     let _ = Command::new(zr_bin())
         .args(["daemon", "stop"])
@@ -250,7 +257,8 @@ fn http_capability_is_forwarded_through_daemon() {
 
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line).unwrap();
-    let response: serde_json::Value = serde_json::from_str(line.trim()).expect("parse daemon response");
+    let response: serde_json::Value =
+        serde_json::from_str(line.trim()).expect("parse daemon response");
 
     let _ = Command::new(zr_bin())
         .args(["daemon", "stop"])
@@ -261,7 +269,10 @@ fn http_capability_is_forwarded_through_daemon() {
     let _ = daemon.wait();
     let _ = server_handle.join();
 
-    assert!(response["ok"].as_bool().unwrap_or(false), "response: {response}");
+    assert!(
+        response["ok"].as_bool().unwrap_or(false),
+        "response: {response}"
+    );
     let result = response
         .get("result")
         .cloned()

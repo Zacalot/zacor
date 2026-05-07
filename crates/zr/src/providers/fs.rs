@@ -22,7 +22,10 @@ impl CapabilityProvider for FsProvider {
 }
 
 fn handle_fs(op: &str, params: &serde_json::Value) -> std::io::Result<serde_json::Value> {
-    let path_str = params.get("path").and_then(|value| value.as_str()).unwrap_or("");
+    let path_str = params
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     let resolved = resolve_path(path_str);
 
     match op {
@@ -73,7 +76,10 @@ fn handle_fs(op: &str, params: &serde_json::Value) -> std::io::Result<serde_json
         "exists" => Ok(json!({"exists": Path::new(&resolved).exists()})),
         "walk" => fs_walk(&resolved, params),
         "write" => {
-            let content = params.get("content").and_then(|value| value.as_str()).unwrap_or("");
+            let content = params
+                .get("content")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
             let decoded = protocol::base64_decode(content)?;
             std::fs::write(&resolved, decoded)?;
             Ok(json!({}))
@@ -83,8 +89,18 @@ fn handle_fs(op: &str, params: &serde_json::Value) -> std::io::Result<serde_json
             Ok(json!({}))
         }
         "rename" => {
-            let from = resolve_path(params.get("from").and_then(|value| value.as_str()).unwrap_or(""));
-            let to = resolve_path(params.get("to").and_then(|value| value.as_str()).unwrap_or(""));
+            let from = resolve_path(
+                params
+                    .get("from")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+            );
+            let to = resolve_path(
+                params
+                    .get("to")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+            );
             std::fs::rename(from, to)?;
             Ok(json!({}))
         }
@@ -96,7 +112,10 @@ fn handle_fs(op: &str, params: &serde_json::Value) -> std::io::Result<serde_json
 }
 
 fn fs_walk(resolved: &str, params: &serde_json::Value) -> std::io::Result<serde_json::Value> {
-    let hidden = params.get("hidden").and_then(|value| value.as_bool()).unwrap_or(true);
+    let hidden = params
+        .get("hidden")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
     let gitignore = params
         .get("gitignore")
         .and_then(|value| value.as_bool())
@@ -186,7 +205,10 @@ mod tests {
     #[test]
     fn not_found_maps_error_kind() {
         let error = FsProvider
-            .handle("read_string", &json!({"path": "/nonexistent/path/file.txt"}))
+            .handle(
+                "read_string",
+                &json!({"path": "/nonexistent/path/file.txt"}),
+            )
             .unwrap_err();
         assert_eq!(error.kind, "not_found");
     }

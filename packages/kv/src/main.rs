@@ -27,10 +27,12 @@ fn main() {
 
                 // Background flush thread
                 let flush_state = Arc::clone(&state);
-                thread::spawn(move || loop {
-                    thread::sleep(Duration::from_secs(30));
-                    let guard = flush_state.lock().unwrap();
-                    let _ = zr_kv::save_store(&guard.1, &guard.0);
+                thread::spawn(move || {
+                    loop {
+                        thread::sleep(Duration::from_secs(30));
+                        let guard = flush_state.lock().unwrap();
+                        let _ = zr_kv::save_store(&guard.1, &guard.0);
+                    }
                 });
 
                 state

@@ -17,20 +17,25 @@ impl CapabilityProvider for ClipboardProvider {
     ) -> Result<serde_json::Value, CapabilityError> {
         match op {
             "read" => {
-                let mut clipboard = arboard::Clipboard::new()
-                    .map_err(|error| CapabilityError::from_io(&std::io::Error::other(error.to_string())))?;
-                let text = clipboard
-                    .get_text()
-                    .map_err(|error| CapabilityError::from_io(&std::io::Error::other(error.to_string())))?;
+                let mut clipboard = arboard::Clipboard::new().map_err(|error| {
+                    CapabilityError::from_io(&std::io::Error::other(error.to_string()))
+                })?;
+                let text = clipboard.get_text().map_err(|error| {
+                    CapabilityError::from_io(&std::io::Error::other(error.to_string()))
+                })?;
                 Ok(json!({"text": text}))
             }
             "write" => {
-                let text = params.get("text").and_then(|value| value.as_str()).unwrap_or("");
-                let mut clipboard = arboard::Clipboard::new()
-                    .map_err(|error| CapabilityError::from_io(&std::io::Error::other(error.to_string())))?;
-                clipboard
-                    .set_text(text.to_string())
-                    .map_err(|error| CapabilityError::from_io(&std::io::Error::other(error.to_string())))?;
+                let text = params
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let mut clipboard = arboard::Clipboard::new().map_err(|error| {
+                    CapabilityError::from_io(&std::io::Error::other(error.to_string()))
+                })?;
+                clipboard.set_text(text.to_string()).map_err(|error| {
+                    CapabilityError::from_io(&std::io::Error::other(error.to_string()))
+                })?;
                 Ok(json!({}))
             }
             _ => Err(invalid_input(format!("unknown clipboard operation: {op}"))),

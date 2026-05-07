@@ -28,16 +28,20 @@ pub fn cat(
         None => input,
     };
 
-    let all_lines: Vec<CatRecord> = reader.lines().enumerate().map(|(i, line)| {
-        let content = line.unwrap_or_else(|e| {
-            eprintln!("cat: read error: {}", e);
-            String::new()
-        });
-        CatRecord {
-            line: i + 1,
-            content,
-        }
-    }).collect();
+    let all_lines: Vec<CatRecord> = reader
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let content = line.unwrap_or_else(|e| {
+                eprintln!("cat: read error: {}", e);
+                String::new()
+            });
+            CatRecord {
+                line: i + 1,
+                content,
+            }
+        })
+        .collect();
 
     if let Some(n) = lines {
         let n = n.max(0) as usize;

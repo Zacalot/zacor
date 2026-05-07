@@ -37,10 +37,7 @@ const PLURAL_IRREGULARS: &[(&str, &str)] = &[
     ("fish", "fish"),
 ];
 
-const VERB_3SG_IRREGULARS: &[(&str, &str)] = &[
-    ("be", "is"),
-    ("have", "has"),
-];
+const VERB_3SG_IRREGULARS: &[(&str, &str)] = &[("be", "is"), ("have", "has")];
 
 pub fn pluralize(lemma: &str) -> String {
     let lower = lemma.to_lowercase();

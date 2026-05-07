@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::BufRead;
 
 zacor_package::include_args!();
@@ -13,22 +13,26 @@ pub fn cmd_rename(
     let mapping: Map<String, Value> = serde_json::from_str(&args.column)
         .map_err(|e| format!("reshape rename: invalid column mapping JSON: {e}"))?;
 
-    let rename_map: Vec<(String, String)> = mapping.into_iter()
+    let rename_map: Vec<(String, String)> = mapping
+        .into_iter()
         .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
         .collect();
 
-    let output: Vec<Value> = records.into_iter().map(|record| {
-        if let Value::Object(mut map) = record {
-            for (old, new) in &rename_map {
-                if let Some(val) = map.remove(old) {
-                    map.insert(new.clone(), val);
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            if let Value::Object(mut map) = record {
+                for (old, new) in &rename_map {
+                    if let Some(val) = map.remove(old) {
+                        map.insert(new.clone(), val);
+                    }
                 }
+                Value::Object(map)
+            } else {
+                record
             }
-            Value::Object(map)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
@@ -40,36 +44,46 @@ pub fn cmd_flatten(
     let reader = input.ok_or("reshape flatten: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let fields: Vec<&str> = args.fields.as_deref()
+    let fields: Vec<&str> = args
+        .fields
+        .as_deref()
         .map(|s| zacor_package::parse_field_list(s))
         .unwrap_or_default();
     let recursive = args.all;
 
-    let output: Vec<Value> = records.into_iter().map(|record| {
-        if let Value::Object(map) = record {
-            let mut result = Map::new();
-            for (k, v) in map {
-                let should_flatten = fields.is_empty() || fields.contains(&k.as_str());
-                if should_flatten {
-                    if let Value::Object(inner) = v {
-                        flatten_into(&mut result, &k, inner, recursive);
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            if let Value::Object(map) = record {
+                let mut result = Map::new();
+                for (k, v) in map {
+                    let should_flatten = fields.is_empty() || fields.contains(&k.as_str());
+                    if should_flatten {
+                        if let Value::Object(inner) = v {
+                            flatten_into(&mut result, &k, inner, recursive);
+                        } else {
+                            result.insert(k, v);
+                        }
                     } else {
                         result.insert(k, v);
                     }
-                } else {
-                    result.insert(k, v);
                 }
+                Value::Object(result)
+            } else {
+                record
             }
-            Value::Object(result)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
 
-fn flatten_into(target: &mut Map<String, Value>, prefix: &str, map: Map<String, Value>, recursive: bool) {
+fn flatten_into(
+    target: &mut Map<String, Value>,
+    prefix: &str,
+    map: Map<String, Value>,
+    recursive: bool,
+) {
     for (k, v) in map {
         let key = format!("{prefix}_{k}");
         if recursive {
@@ -89,11 +103,17 @@ pub fn cmd_transpose(
     let reader = input.ok_or("reshape transpose: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let names: Vec<&str> = args.names.as_deref()
+    let names: Vec<&str> = args
+        .names
+        .as_deref()
         .map(|s| s.split_whitespace().collect())
         .unwrap_or_else(|| vec!["key", "value"]);
     let key_name = names.first().copied().unwrap_or("key");
-    let val_prefix = if names.len() > 1 { &names[1..] } else { &["value"] };
+    let val_prefix = if names.len() > 1 {
+        &names[1..]
+    } else {
+        &["value"]
+    };
 
     if records.is_empty() {
         return Ok(Vec::new());
@@ -116,7 +136,8 @@ pub fn cmd_transpose(
             } else {
                 format!("{}_{}", val_prefix.first().unwrap_or(&"value"), i)
             };
-            let val = record.as_object()
+            let val = record
+                .as_object()
                 .and_then(|m| m.get(field))
                 .cloned()
                 .unwrap_or(Value::Null);
@@ -135,9 +156,10 @@ pub fn cmd_wrap(
     let reader = input.ok_or("reshape wrap: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let output: Vec<Value> = records.into_iter().map(|v| {
-        json!({ &args.name: v })
-    }).collect();
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|v| json!({ &args.name: v }))
+        .collect();
 
     Ok(output)
 }
@@ -157,7 +179,8 @@ pub fn cmd_group_by(
         let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
         for record in records {
-            let key = record.as_object()
+            let key = record
+                .as_object()
                 .and_then(|m| m.get(field))
                 .map(|v| match v {
                     Value::String(s) => s.clone(),
@@ -174,9 +197,10 @@ pub fn cmd_group_by(
         }
 
         if args.to_table {
-            Ok(groups.into_iter().map(|(key, items)| {
-                json!({"group": key, "items": items})
-            }).collect())
+            Ok(groups
+                .into_iter()
+                .map(|(key, items)| json!({"group": key, "items": items}))
+                .collect())
         } else {
             let mut map = Map::new();
             for (key, items) in groups {
@@ -191,15 +215,19 @@ pub fn cmd_group_by(
         let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
         for record in records {
-            let key_parts: Vec<String> = fields.iter().map(|&f| {
-                record.as_object()
-                    .and_then(|m| m.get(f))
-                    .map(|v| match v {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .unwrap_or_else(|| "null".to_string())
-            }).collect();
+            let key_parts: Vec<String> = fields
+                .iter()
+                .map(|&f| {
+                    record
+                        .as_object()
+                        .and_then(|m| m.get(f))
+                        .map(|v| match v {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                        .unwrap_or_else(|| "null".to_string())
+                })
+                .collect();
             let key = key_parts.join("\0");
 
             if let Some(&idx) = index.get(&key) {
@@ -211,18 +239,26 @@ pub fn cmd_group_by(
         }
 
         if args.to_table {
-            Ok(groups.into_iter().map(|(_, items)| {
-                let group_val = fields.iter().map(|&f| {
-                    items[0].as_object()
-                        .and_then(|m| m.get(f))
-                        .map(|v| match v {
-                            Value::String(s) => s.clone(),
-                            other => other.to_string(),
+            Ok(groups
+                .into_iter()
+                .map(|(_, items)| {
+                    let group_val = fields
+                        .iter()
+                        .map(|&f| {
+                            items[0]
+                                .as_object()
+                                .and_then(|m| m.get(f))
+                                .map(|v| match v {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                })
+                                .unwrap_or_else(|| "null".to_string())
                         })
-                        .unwrap_or_else(|| "null".to_string())
-                }).collect::<Vec<_>>().join(", ");
-                json!({"group": group_val, "items": items})
-            }).collect())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    json!({"group": group_val, "items": items})
+                })
+                .collect())
         } else {
             // Build nested structure
             build_nested_groups(&records_placeholder_unused(), &fields)
@@ -246,17 +282,21 @@ pub fn cmd_enumerate(
     let reader = input.ok_or("reshape enumerate: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
 
-    let output: Vec<Value> = records.into_iter().enumerate().map(|(i, record)| {
-        if let Value::Object(map) = record {
-            // Insert index at front
-            let mut new_map = Map::new();
-            new_map.insert("index".to_string(), json!(i));
-            new_map.extend(map);
-            Value::Object(new_map)
-        } else {
-            json!({"index": i, "value": record})
-        }
-    }).collect();
+    let output: Vec<Value> = records
+        .into_iter()
+        .enumerate()
+        .map(|(i, record)| {
+            if let Value::Object(map) = record {
+                // Insert index at front
+                let mut new_map = Map::new();
+                new_map.insert("index".to_string(), json!(i));
+                new_map.extend(map);
+                Value::Object(new_map)
+            } else {
+                json!({"index": i, "value": record})
+            }
+        })
+        .collect();
 
     Ok(output)
 }
@@ -301,12 +341,15 @@ pub fn cmd_values(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 
@@ -391,7 +434,8 @@ mod tests {
     #[test]
     fn group_by_to_table() {
         let data = r#"[{"type":"a","v":1},{"type":"b","v":2},{"type":"a","v":3}]"#;
-        let args: args::GroupByArgs = make_args(&[("fields", json!("type")), ("to-table", json!(true))]);
+        let args: args::GroupByArgs =
+            make_args(&[("fields", json!("type")), ("to-table", json!(true))]);
         let result = cmd_group_by(&args, json_input(data)).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0]["group"], "a");
@@ -414,7 +458,10 @@ mod tests {
         let args: args::ColumnsArgs = make_args(&[]);
         let result = cmd_columns(&args, json_input(data)).unwrap();
         assert_eq!(result.len(), 3);
-        let vals: Vec<&str> = result.iter().map(|r| r["value"].as_str().unwrap()).collect();
+        let vals: Vec<&str> = result
+            .iter()
+            .map(|r| r["value"].as_str().unwrap())
+            .collect();
         assert!(vals.contains(&"name"));
         assert!(vals.contains(&"size"));
         assert!(vals.contains(&"type"));

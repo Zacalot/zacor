@@ -1,7 +1,7 @@
 mod api;
 mod init;
 
-use crate::app::SharedAppState;
+use crate::session::{LuaBufferApi, LuaCommandApi, LuaMinibufferApi, SharedSession};
 use anyhow::{Result, anyhow};
 use mlua::Lua;
 
@@ -10,9 +10,15 @@ pub struct LuaRuntime {
 }
 
 impl LuaRuntime {
-    pub fn new(state: SharedAppState) -> Result<Self> {
+    pub fn new(state: SharedSession) -> Result<Self> {
         let lua = Lua::new();
-        api::register(&lua, state).map_err(|error| anyhow!(error.to_string()))?;
+        api::register(
+            &lua,
+            LuaCommandApi::new(state.clone()),
+            LuaBufferApi::new(state.clone()),
+            LuaMinibufferApi::new(state),
+        )
+        .map_err(|error| anyhow!(error.to_string()))?;
         init::load_user_init(&lua).map_err(|error| anyhow!(error.to_string()))?;
         Ok(Self { lua })
     }

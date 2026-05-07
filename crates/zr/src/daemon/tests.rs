@@ -121,7 +121,10 @@ fn daemon_wasm_service_accept_loop_roundtrip() {
     probe.flush().unwrap();
     let mut resp = String::new();
     let _ = std::io::BufReader::new(&probe).read_to_string(&mut resp);
-    assert!(resp.starts_with("HTTP/1.0 200 OK"), "health response: {resp}");
+    assert!(
+        resp.starts_with("HTTP/1.0 200 OK"),
+        "health response: {resp}"
+    );
 
     shutdown.store(true, Ordering::Relaxed);
     let _ = TcpStream::connect(format!("127.0.0.1:{}", port));
@@ -228,10 +231,7 @@ fn warm_library_instance_reuses_state_across_invocations() {
 
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let zr_data = tmp.path().join(".zr").join("kv");
-    let env = HashMap::from([(
-        "ZR_DATA".to_string(),
-        zr_data.to_string_lossy().to_string(),
-    )]);
+    let env = HashMap::from([("ZR_DATA".to_string(), zr_data.to_string_lossy().to_string())]);
     let store_dir = tmp.path().join("store").join("kv").join("0.1.0");
     std::fs::create_dir_all(&store_dir).unwrap();
     std::fs::copy(&wasm_path, store_dir.join("kv.wasm")).unwrap();
@@ -340,8 +340,9 @@ fn drive_warm_instance(
             zacor_package::protocol::Message::Output(output) => outputs.push(output.record),
             zacor_package::protocol::Message::CapabilityReq(req) => {
                 let res = crate::providers::build_default_registry().dispatch(&req);
-                let msg = serde_json::to_string(&zacor_package::protocol::Message::CapabilityRes(res))
-                    .unwrap();
+                let msg =
+                    serde_json::to_string(&zacor_package::protocol::Message::CapabilityRes(res))
+                        .unwrap();
                 let mut writer = instance.writer.lock().unwrap();
                 writer.write_all(msg.as_bytes()).unwrap();
                 writer.write_all(b"\n").unwrap();

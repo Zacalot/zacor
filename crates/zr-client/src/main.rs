@@ -97,8 +97,8 @@ fn read_package(home: &Path, pkg: &str) -> Result<(String, serde_json::Value), S
     // manually (no wasmparser dep).
     let store_dir = home.join("store").join(pkg).join(&version);
     let wasm_path = find_wasm_in_dir(&store_dir)?;
-    let wasm_bytes = fs::read(&wasm_path)
-        .map_err(|e| format!("read wasm {}: {}", wasm_path.display(), e))?;
+    let wasm_bytes =
+        fs::read(&wasm_path).map_err(|e| format!("read wasm {}: {}", wasm_path.display(), e))?;
     let manifest_yaml = extract_custom_section(&wasm_bytes, "zacor_manifest").ok_or_else(|| {
         format!(
             "wasm at {} has no embedded zacor_manifest section",
@@ -113,14 +113,10 @@ fn read_package(home: &Path, pkg: &str) -> Result<(String, serde_json::Value), S
     // the generated yaml is flat and simple. Actually the embedded
     // manifest is yaml, not JSON. Punting: use naive line-based
     // parsing sufficient for the v1 cases.
-    let manifest_str = std::str::from_utf8(&manifest_yaml)
-        .map_err(|e| format!("manifest is not utf-8: {}", e))?;
-    let definition = parse_minimal_manifest(manifest_str).map_err(|e| {
-        format!(
-            "parse embedded manifest for '{}' v{}: {}",
-            pkg, version, e
-        )
-    })?;
+    let manifest_str =
+        std::str::from_utf8(&manifest_yaml).map_err(|e| format!("manifest is not utf-8: {}", e))?;
+    let definition = parse_minimal_manifest(manifest_str)
+        .map_err(|e| format!("parse embedded manifest for '{}' v{}: {}", pkg, version, e))?;
 
     Ok((version, definition))
 }
@@ -205,39 +201,40 @@ fn parse_minimal_manifest(yaml: &str) -> Result<serde_json::Value, String> {
     let mut args_obj: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     let mut arg_order: Vec<String> = Vec::new();
 
-    let flush_arg =
-        |arg: &mut Option<String>,
-         arg_obj: &mut serde_json::Map<String, serde_json::Value>,
-         args: &mut serde_json::Map<String, serde_json::Value>,
-         order: &mut Vec<String>| {
-            if let Some(n) = arg.take() {
-                order.push(n.clone());
-                args.insert(n, serde_json::Value::Object(std::mem::take(arg_obj)));
-            }
-        };
+    let flush_arg = |arg: &mut Option<String>,
+                     arg_obj: &mut serde_json::Map<String, serde_json::Value>,
+                     args: &mut serde_json::Map<String, serde_json::Value>,
+                     order: &mut Vec<String>| {
+        if let Some(n) = arg.take() {
+            order.push(n.clone());
+            args.insert(n, serde_json::Value::Object(std::mem::take(arg_obj)));
+        }
+    };
 
-    let flush_cmd =
-        |cmd: &mut Option<String>,
-         cmd_obj: &mut serde_json::Map<String, serde_json::Value>,
-         args: &mut serde_json::Map<String, serde_json::Value>,
-         order: &mut Vec<String>,
-         cmds: &mut serde_json::Map<String, serde_json::Value>| {
-            if let Some(n) = cmd.take() {
-                if !args.is_empty() {
-                    cmd_obj.insert("args".into(), serde_json::Value::Object(std::mem::take(args)));
-                    cmd_obj.insert(
-                        "arg_order".into(),
-                        serde_json::Value::Array(
-                            std::mem::take(order)
-                                .into_iter()
-                                .map(serde_json::Value::String)
-                                .collect(),
-                        ),
-                    );
-                }
-                cmds.insert(n, serde_json::Value::Object(std::mem::take(cmd_obj)));
+    let flush_cmd = |cmd: &mut Option<String>,
+                     cmd_obj: &mut serde_json::Map<String, serde_json::Value>,
+                     args: &mut serde_json::Map<String, serde_json::Value>,
+                     order: &mut Vec<String>,
+                     cmds: &mut serde_json::Map<String, serde_json::Value>| {
+        if let Some(n) = cmd.take() {
+            if !args.is_empty() {
+                cmd_obj.insert(
+                    "args".into(),
+                    serde_json::Value::Object(std::mem::take(args)),
+                );
+                cmd_obj.insert(
+                    "arg_order".into(),
+                    serde_json::Value::Array(
+                        std::mem::take(order)
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
             }
-        };
+            cmds.insert(n, serde_json::Value::Object(std::mem::take(cmd_obj)));
+        }
+    };
 
     for line in yaml.lines() {
         if line.trim().is_empty() {
@@ -298,10 +295,7 @@ fn parse_minimal_manifest(yaml: &str) -> Result<serde_json::Value, String> {
             // An arg property like `        type: string`
             if let Some((k, v)) = trimmed.split_once(':') {
                 let v = v.trim().trim_matches('"').to_string();
-                current_arg_obj.insert(
-                    k.trim().to_string(),
-                    serde_json::Value::String(v),
-                );
+                current_arg_obj.insert(k.trim().to_string(), serde_json::Value::String(v));
             }
         }
     }
@@ -432,8 +426,12 @@ fn open_dispatch(
     version: &str,
     env: &BTreeMap<String, String>,
 ) -> Result<TcpStream, String> {
-    let mut stream = TcpStream::connect(DAEMON_ADDR)
-        .map_err(|e| format!("connect to daemon at {}: {}\nhint: run `zacor daemon start`", DAEMON_ADDR, e))?;
+    let mut stream = TcpStream::connect(DAEMON_ADDR).map_err(|e| {
+        format!(
+            "connect to daemon at {}: {}\nhint: run `zacor daemon start`",
+            DAEMON_ADDR, e
+        )
+    })?;
 
     let req = serde_json::json!({
         "request": "dispatch",
@@ -448,7 +446,9 @@ fn open_dispatch(
     let mut ack = String::new();
     let mut buf = [0u8; 1];
     loop {
-        let n = stream.read(&mut buf).map_err(|e| format!("read ack: {}", e))?;
+        let n = stream
+            .read(&mut buf)
+            .map_err(|e| format!("read ack: {}", e))?;
         if n == 0 || buf[0] == b'\n' {
             break;
         }
@@ -513,7 +513,10 @@ fn run_session(
                 let id = frame["id"].as_u64().unwrap_or(0);
                 let domain = frame["domain"].as_str().unwrap_or("");
                 let op = frame["op"].as_str().unwrap_or("");
-                let params = frame.get("params").cloned().unwrap_or(serde_json::json!({}));
+                let params = frame
+                    .get("params")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
                 let res = handle_capability(id, domain, op, &params);
                 writeln!(stream, "{}", res).map_err(|e| format!("write cap_res: {}", e))?;
                 stream.flush().ok();
@@ -691,12 +694,11 @@ fn walk(path: &str, params: &serde_json::Value) -> Result<serde_json::Value, Str
         if p == root {
             continue;
         }
-        let Ok(rel) = p.strip_prefix(root) else { continue };
+        let Ok(rel) = p.strip_prefix(root) else {
+            continue;
+        };
         let rel_str = rel.to_string_lossy().replace('\\', "/");
-        let is_dir = entry
-            .file_type()
-            .map(|ft| ft.is_dir())
-            .unwrap_or(false);
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
         entries.push(serde_json::json!({"path": rel_str, "is_dir": is_dir}));
     }
 
@@ -705,8 +707,7 @@ fn walk(path: &str, params: &serde_json::Value) -> Result<serde_json::Value, Str
 
 /// Minimal RFC 4648 base64 encoder (no deps).
 fn base64_encode(input: &[u8]) -> String {
-    const ALPHA: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= input.len() {

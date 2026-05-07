@@ -83,8 +83,7 @@ pub fn connect_or_start_daemon(home: &Path) -> Result<TcpStream> {
         return Ok(stream);
     }
     start_daemon(home)?;
-    wait_for_daemon(std::time::Duration::from_secs(5))
-        .context("failed to start daemon")
+    wait_for_daemon(std::time::Duration::from_secs(5)).context("failed to start daemon")
 }
 
 /// Start the daemon process in the background.
@@ -200,7 +199,9 @@ fn attempt_dispatch(
     writeln!(writer, "{}", req).context("sending dispatch request")?;
     writer.flush().context("flushing dispatch request")?;
 
-    let mut ack_stream = stream.try_clone().context("cloning daemon stream for ack")?;
+    let mut ack_stream = stream
+        .try_clone()
+        .context("cloning daemon stream for ack")?;
     let ack_line = read_line_byte_by_byte(&mut ack_stream).context("reading dispatch ack")?;
 
     let ack: serde_json::Value =
@@ -260,13 +261,18 @@ fn attempt_library_invoke(
         "env": env,
     });
 
-    let mut writer = stream.try_clone().context("cloning daemon stream for write")?;
+    let mut writer = stream
+        .try_clone()
+        .context("cloning daemon stream for write")?;
     writeln!(writer, "{}", req).context("sending library invoke request")?;
     writer.flush().context("flushing library invoke request")?;
 
-    let mut ack_stream = stream.try_clone().context("cloning daemon stream for ack")?;
+    let mut ack_stream = stream
+        .try_clone()
+        .context("cloning daemon stream for ack")?;
     let ack_line = read_line_byte_by_byte(&mut ack_stream).context("reading library invoke ack")?;
-    let ack: serde_json::Value = serde_json::from_str(ack_line.trim()).context("parsing library invoke ack")?;
+    let ack: serde_json::Value =
+        serde_json::from_str(ack_line.trim()).context("parsing library invoke ack")?;
 
     if ack["ok"].as_bool().unwrap_or(false) {
         return Ok(DispatchAttempt::Ok(stream));
@@ -429,7 +435,10 @@ pub fn try_open_library_invoke_stream(
 fn refusal_message(refusal: &DaemonRefusal) -> String {
     match refusal {
         DaemonRefusal::VersionMismatch { daemon, client } => {
-            format!("daemon version mismatch: daemon={}, client={} - daemon draining", daemon, client)
+            format!(
+                "daemon version mismatch: daemon={}, client={} - daemon draining",
+                daemon, client
+            )
         }
         DaemonRefusal::PackageNotFound { name } => format!("package not found: {}", name),
         DaemonRefusal::WasmArtifactMissing { path } => format!("wasm artifact missing: {}", path),

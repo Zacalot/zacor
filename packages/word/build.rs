@@ -59,7 +59,9 @@ fn main() {
                 .description("Find semantically related words")
                 .args(&[
                     ArgSchemaInfo::string("word").required(),
-                    ArgSchemaInfo::string("relation").optional().flag("relation"),
+                    ArgSchemaInfo::string("relation")
+                        .optional()
+                        .flag("relation"),
                     ArgSchemaInfo::integer("depth").optional().flag("depth"),
                     ArgSchemaInfo::string("pos").optional().flag("pos"),
                     ArgSchemaInfo::integer("sense").optional().flag("sense"),
@@ -100,7 +102,9 @@ fn main() {
             CommandSpec::named("sentence")
                 .description("Generate random sentences from POS templates")
                 .args(&[
-                    ArgSchemaInfo::string("template").optional().flag("template"),
+                    ArgSchemaInfo::string("template")
+                        .optional()
+                        .flag("template"),
                     ArgSchemaInfo::bool("raw").flag("raw"),
                     ArgSchemaInfo::integer("count").optional().flag("count"),
                     ArgSchemaInfo::number("seed").optional().flag("seed"),

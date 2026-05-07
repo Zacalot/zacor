@@ -80,12 +80,8 @@ pub fn find_wasm_in_store(dir: &Path) -> Result<Option<PathBuf>> {
 pub fn load_from_store(home: &Path, name: &str, version: &str) -> Result<PackageDefinition> {
     let dir = paths::store_path(home, name, version);
     if let Some(wasm_path) = find_wasm_in_store(&dir)? {
-        return read_manifest(&wasm_path).with_context(|| {
-            format!(
-                "reading embedded manifest from {}",
-                wasm_path.display()
-            )
-        });
+        return read_manifest(&wasm_path)
+            .with_context(|| format!("reading embedded manifest from {}", wasm_path.display()));
     }
     let yaml_path = paths::definition_path(home, name, version);
     package_definition::parse_file(&yaml_path)
@@ -103,11 +99,7 @@ mod tests {
             .join("wasm32-wasip1")
             .join("release")
             .join("echo.wasm");
-        if p.exists() {
-            Some(p)
-        } else {
-            None
-        }
+        if p.exists() { Some(p) } else { None }
     }
 
     #[test]

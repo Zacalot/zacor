@@ -99,8 +99,8 @@ fn parse_slot(s: &str) -> Result<Token, String> {
             form = f;
         } else {
             let full = format!("{pos}.{part}");
-            let d = match_domain(&full)
-                .ok_or_else(|| format!("unknown domain '{part}' for {pos}"))?;
+            let d =
+                match_domain(&full).ok_or_else(|| format!("unknown domain '{part}' for {pos}"))?;
             domain = Some(d);
         }
     }

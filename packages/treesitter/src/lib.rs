@@ -67,7 +67,8 @@ fn decl(file: &str, kind: &str, name: &str, signature: &str) -> Declaration {
 }
 
 fn child_name(node: tree_sitter::Node, source: &str) -> Option<String> {
-    node.child_by_field_name("name").map(|node| node_text(node, source))
+    node.child_by_field_name("name")
+        .map(|node| node_text(node, source))
 }
 
 fn node_text(node: tree_sitter::Node, source: &str) -> String {
@@ -82,7 +83,12 @@ fn collect_rust(node: tree_sitter::Node, source: &str, file: &str, out: &mut Vec
     match node.kind() {
         "function_item" => {
             if let Some(name) = child_name(node, source) {
-                out.push(decl(file, "function", &name, &first_line(&node_text(node, source))));
+                out.push(decl(
+                    file,
+                    "function",
+                    &name,
+                    &first_line(&node_text(node, source)),
+                ));
             }
         }
         "struct_item" => {
@@ -106,7 +112,12 @@ fn collect_rust(node: tree_sitter::Node, source: &str, file: &str, out: &mut Vec
         }
         "type_item" => {
             if let Some(name) = child_name(node, source) {
-                out.push(decl(file, "type", &name, &first_line(&node_text(node, source))));
+                out.push(decl(
+                    file,
+                    "type",
+                    &name,
+                    &first_line(&node_text(node, source)),
+                ));
             }
         }
         _ => {}
@@ -117,7 +128,12 @@ fn collect_js_ts(node: tree_sitter::Node, source: &str, file: &str, out: &mut Ve
     match node.kind() {
         "function_declaration" => {
             if let Some(name) = child_name(node, source) {
-                out.push(decl(file, "function", &name, &first_line(&node_text(node, source))));
+                out.push(decl(
+                    file,
+                    "function",
+                    &name,
+                    &first_line(&node_text(node, source)),
+                ));
             }
         }
         "class_declaration" => {
@@ -132,7 +148,12 @@ fn collect_js_ts(node: tree_sitter::Node, source: &str, file: &str, out: &mut Ve
         }
         "type_alias_declaration" => {
             if let Some(name) = child_name(node, source) {
-                out.push(decl(file, "type", &name, &first_line(&node_text(node, source))));
+                out.push(decl(
+                    file,
+                    "type",
+                    &name,
+                    &first_line(&node_text(node, source)),
+                ));
             }
         }
         _ => {}
@@ -143,12 +164,22 @@ fn collect_python(node: tree_sitter::Node, source: &str, file: &str, out: &mut V
     match node.kind() {
         "function_definition" => {
             if let Some(name) = child_name(node, source) {
-                out.push(decl(file, "function", &name, &first_line(&node_text(node, source))));
+                out.push(decl(
+                    file,
+                    "function",
+                    &name,
+                    &first_line(&node_text(node, source)),
+                ));
             }
         }
         "class_definition" => {
             if let Some(name) = child_name(node, source) {
-                out.push(decl(file, "class", &name, &first_line(&node_text(node, source))));
+                out.push(decl(
+                    file,
+                    "class",
+                    &name,
+                    &first_line(&node_text(node, source)),
+                ));
             }
         }
         _ => {}

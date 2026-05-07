@@ -658,11 +658,9 @@ impl PackageSpec {
     }
 
     fn resolved_build_output(&self) -> String {
-        self.build_output
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                workspace_target_rel_path().unwrap_or_else(|| "target/release".to_string())
-            })
+        self.build_output.map(|s| s.to_string()).unwrap_or_else(|| {
+            workspace_target_rel_path().unwrap_or_else(|| "target/release".to_string())
+        })
     }
 
     /// Perform all build-time generation: arg types, package.yaml, and
@@ -682,7 +680,10 @@ pub fn generate_package_yaml(spec: &PackageSpec) -> String {
     yaml.push_str(&format!("binary: {}\n", spec.resolved_binary()));
 
     if let Some(description) = spec.info.description {
-        yaml.push_str(&format!("description: \"{}\"\n", description.replace('"', "\\\"")));
+        yaml.push_str(&format!(
+            "description: \"{}\"\n",
+            description.replace('"', "\\\"")
+        ));
     }
 
     yaml.push_str("protocol: true\n");
@@ -755,7 +756,10 @@ fn write_command_yaml(yaml: &mut String, name: &str, command: &CommandSpec, dept
     yaml.push_str(&format!("{indent}{name}:\n"));
 
     if let Some(description) = command.description {
-        yaml.push_str(&format!("{inner}description: \"{}\"\n", description.replace('"', "\\\"")));
+        yaml.push_str(&format!(
+            "{inner}description: \"{}\"\n",
+            description.replace('"', "\\\"")
+        ));
     }
 
     if !command.subcommands.is_empty() {

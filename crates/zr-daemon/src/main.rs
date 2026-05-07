@@ -15,7 +15,9 @@ mod daemon;
 mod job_object;
 
 mod provider_support {
-    pub(crate) fn invalid_input(message: impl Into<String>) -> zacor_host::protocol::CapabilityError {
+    pub(crate) fn invalid_input(
+        message: impl Into<String>,
+    ) -> zacor_host::protocol::CapabilityError {
         zacor_host::protocol::CapabilityError {
             kind: "invalid_input".into(),
             message: message.into(),

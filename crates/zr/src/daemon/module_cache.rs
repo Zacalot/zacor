@@ -161,7 +161,8 @@ pub(super) fn proxy_library_invoke(
                         Ok(0) => break,
                         Ok(_) => {
                             let mut writer = instance.writer.lock().unwrap();
-                            if writer.write_all(line.as_bytes()).is_err() || writer.flush().is_err() {
+                            if writer.write_all(line.as_bytes()).is_err() || writer.flush().is_err()
+                            {
                                 break;
                             }
                         }

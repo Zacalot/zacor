@@ -112,8 +112,8 @@ where
 
 /// Common init sequence for protocol entry points.
 /// Returns the invoke and input reader, with reader started.
-fn protocol_init(
-) -> std::result::Result<(crate::protocol::Invoke, Option<crate::runtime::InputReader>), i32> {
+fn protocol_init()
+-> std::result::Result<(crate::protocol::Invoke, Option<crate::runtime::InputReader>), i32> {
     let (invoke, input_reader, reader_handle) = match crate::runtime::init_invoke() {
         Ok(v) => v,
         Err(e) => {

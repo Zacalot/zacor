@@ -12,12 +12,10 @@ impl CapabilityProvider for HttpForwarder {
     }
 
     fn handle(&self, op: &str, params: &Value) -> Result<Value, CapabilityError> {
-        let home = crate::paths::zr_home().map_err(|error| {
-            CapabilityError::from_io(&std::io::Error::other(error.to_string()))
-        })?;
-        let stream = crate::daemon_client::connect_or_start_daemon(&home).map_err(|error| {
-            CapabilityError::from_io(&std::io::Error::other(error.to_string()))
-        })?;
+        let home = crate::paths::zr_home()
+            .map_err(|error| CapabilityError::from_io(&std::io::Error::other(error.to_string())))?;
+        let stream = crate::daemon_client::connect_or_start_daemon(&home)
+            .map_err(|error| CapabilityError::from_io(&std::io::Error::other(error.to_string())))?;
 
         let req = serde_json::json!({
             "request": "capability-forward",
@@ -26,9 +24,13 @@ impl CapabilityProvider for HttpForwarder {
             "params": params,
         });
 
-        let mut writer = stream.try_clone().map_err(|error| CapabilityError::from_io(&error))?;
+        let mut writer = stream
+            .try_clone()
+            .map_err(|error| CapabilityError::from_io(&error))?;
         writeln!(writer, "{}", req).map_err(|error| CapabilityError::from_io(&error))?;
-        writer.flush().map_err(|error| CapabilityError::from_io(&error))?;
+        writer
+            .flush()
+            .map_err(|error| CapabilityError::from_io(&error))?;
 
         let mut line = String::new();
         BufReader::new(stream)
@@ -48,7 +50,9 @@ impl CapabilityProvider for HttpForwarder {
         let capability_res = response
             .get("result")
             .cloned()
-            .and_then(|value| serde_json::from_value::<zacor_host::protocol::CapabilityRes>(value).ok())
+            .and_then(|value| {
+                serde_json::from_value::<zacor_host::protocol::CapabilityRes>(value).ok()
+            })
             .ok_or_else(|| invalid_input("daemon capability-forward missing result"))?;
 
         match capability_res.result {

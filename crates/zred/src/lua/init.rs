@@ -5,7 +5,9 @@ pub fn load_user_init(lua: &Lua) -> Result<()> {
     for path in init_file_candidates(actual_zr_home(), dirs::config_dir()) {
         if path.is_file() {
             let source = std::fs::read_to_string(&path)?;
-            lua.load(&source).set_name(path.to_string_lossy().as_ref()).exec()?;
+            lua.load(&source)
+                .set_name(path.to_string_lossy().as_ref())
+                .exec()?;
             break;
         }
     }

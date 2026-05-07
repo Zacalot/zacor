@@ -8,6 +8,8 @@ pub use zacor_host::{
 #[cfg(test)]
 pub use zacor_host::test_util;
 
+#[path = "../../zacor/src/cli/zr.rs"]
+mod cli;
 mod daemon_client;
 #[path = "../../zacor/src/dispatch/mod.rs"]
 mod dispatch;
@@ -19,8 +21,6 @@ mod job_object;
 mod providers;
 #[path = "../../zacor/src/render.rs"]
 mod render;
-#[path = "../../zacor/src/cli/zr.rs"]
-mod cli;
 
 pub(crate) fn resolve_peer_binary(name: &str) -> std::path::PathBuf {
     let env_name = format!("CARGO_BIN_EXE_{name}");
@@ -53,7 +53,8 @@ pub(crate) fn resolve_peer_binary(name: &str) -> std::path::PathBuf {
             .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
             .map(|entry| entry.path())
             .filter(|path| {
-                path.extension().and_then(|ext| ext.to_str()) == Some(std::env::consts::EXE_EXTENSION)
+                path.extension().and_then(|ext| ext.to_str())
+                    == Some(std::env::consts::EXE_EXTENSION)
                     && path
                         .file_stem()
                         .and_then(|stem| stem.to_str())
@@ -72,9 +73,11 @@ pub(crate) fn resolve_peer_binary(name: &str) -> std::path::PathBuf {
         .map(std::path::Path::to_path_buf);
     if let Some(workspace_root) = workspace_root {
         let bootstrap_target_dir = workspace_root.join("target").join("peer-bin-bootstrap");
-        let target_path = bootstrap_target_dir
-            .join("debug")
-            .join(format!("{}{}", name, std::env::consts::EXE_SUFFIX));
+        let target_path = bootstrap_target_dir.join("debug").join(format!(
+            "{}{}",
+            name,
+            std::env::consts::EXE_SUFFIX
+        ));
         if target_path.exists() {
             return target_path;
         }

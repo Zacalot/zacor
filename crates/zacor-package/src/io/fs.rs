@@ -218,12 +218,15 @@ pub fn walk(path: impl AsRef<Path>, options: &WalkOptions) -> io::Result<Vec<Wal
                 "max_depth": options.max_depth,
             }),
         )?;
-        let entries = data.get("entries").and_then(|v| v.as_array()).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected response format for fs.walk",
-            )
-        })?;
+        let entries = data
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected response format for fs.walk",
+                )
+            })?;
         return entries
             .iter()
             .map(|e| {

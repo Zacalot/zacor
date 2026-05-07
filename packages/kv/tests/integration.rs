@@ -65,39 +65,23 @@ fn kv_set_get_list_delete_lifecycle() {
     assert_eq!(records[0]["value"], "hello world");
 
     // Get
-    let (stdout, code) = run_kv(
-        "get",
-        serde_json::json!({"key": "greeting"}),
-        &home,
-    );
+    let (stdout, code) = run_kv("get", serde_json::json!({"key": "greeting"}), &home);
     assert_eq!(code, 0, "get failed: {}", stdout);
     let records = parse_output_records(&stdout);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["value"], "hello world");
 
     // List
-    let (stdout, code) = run_kv(
-        "list",
-        serde_json::json!({}),
-        &home,
-    );
+    let (stdout, code) = run_kv("list", serde_json::json!({}), &home);
     assert_eq!(code, 0, "list failed: {}", stdout);
     let records = parse_output_records(&stdout);
     assert_eq!(records.len(), 1);
 
     // Delete
-    let (stdout, code) = run_kv(
-        "delete",
-        serde_json::json!({"key": "greeting"}),
-        &home,
-    );
+    let (stdout, code) = run_kv("delete", serde_json::json!({"key": "greeting"}), &home);
     assert_eq!(code, 0, "delete failed: {}", stdout);
 
     // Get deleted key should fail
-    let (_stdout, code) = run_kv(
-        "get",
-        serde_json::json!({"key": "greeting"}),
-        &home,
-    );
+    let (_stdout, code) = run_kv("get", serde_json::json!({"key": "greeting"}), &home);
     assert_ne!(code, 0, "get of deleted key should fail");
 }

@@ -7,17 +7,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zacor_host::protocol::DaemonRefusal;
 
-mod dispatch;
 mod capability_router;
+mod dispatch;
 mod idle;
 mod module_cache;
 mod protocol;
 mod server;
 mod service_supervisor;
 
-use module_cache::{stop_warm_library_instance, LibraryPool};
+use module_cache::{LibraryPool, stop_warm_library_instance};
 use protocol::{DaemonRequest, DaemonResponse, ServiceStatusEntry};
-use service_supervisor::{stop_managed, ManagedService};
+use service_supervisor::{ManagedService, stop_managed};
 
 const DAEMON_PORT: u16 = 19100;
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(10);
@@ -81,9 +81,14 @@ impl DaemonControl {
                     client: client.to_string(),
                 })
             }
-            _ => self.drain_refusal.lock().unwrap().clone().or(Some(DaemonRefusal::Other {
-                message: "daemon draining after version mismatch; retry shortly".into(),
-            })),
+            _ => self
+                .drain_refusal
+                .lock()
+                .unwrap()
+                .clone()
+                .or(Some(DaemonRefusal::Other {
+                    message: "daemon draining after version mismatch; retry shortly".into(),
+                })),
         }
     }
 }
@@ -127,7 +132,9 @@ impl DaemonServer {
         let last_activity = self.last_activity.clone();
         std::thread::Builder::new()
             .name("zr-health-monitor".into())
-            .spawn(move || idle::health_monitor_loop(services, library_pools, control, last_activity))
+            .spawn(move || {
+                idle::health_monitor_loop(services, library_pools, control, last_activity)
+            })
             .context("failed to spawn health monitor")?;
 
         for stream in listener.incoming() {

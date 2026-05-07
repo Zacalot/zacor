@@ -5,8 +5,11 @@ use std::sync::Arc;
 pub trait CapabilityProvider: Send + Sync {
     fn domain(&self) -> &str;
 
-    fn handle(&self, op: &str, params: &serde_json::Value)
-        -> Result<serde_json::Value, CapabilityError>;
+    fn handle(
+        &self,
+        op: &str,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, CapabilityError>;
 }
 
 pub struct CapabilityRegistry {
@@ -20,7 +23,10 @@ impl CapabilityRegistry {
         }
     }
 
-    pub fn register(&mut self, provider: Arc<dyn CapabilityProvider>) -> Result<(), CapabilityError> {
+    pub fn register(
+        &mut self,
+        provider: Arc<dyn CapabilityProvider>,
+    ) -> Result<(), CapabilityError> {
         let domain = provider.domain().to_string();
         if self.providers.contains_key(&domain) {
             return Err(CapabilityError {
@@ -59,7 +65,11 @@ impl CapabilityRegistry {
     }
 
     pub fn domains(&self) -> Vec<&str> {
-        let mut domains = self.providers.keys().map(|domain| domain.as_str()).collect::<Vec<_>>();
+        let mut domains = self
+            .providers
+            .keys()
+            .map(|domain| domain.as_str())
+            .collect::<Vec<_>>();
         domains.sort_unstable();
         domains
     }

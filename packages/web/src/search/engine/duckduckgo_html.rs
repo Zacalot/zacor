@@ -59,7 +59,8 @@ pub(crate) fn parse_html_results(
     let doc = Html::parse_document(html);
     let result_selector = Selector::parse("div.result").map_err(|e| format!("selector: {e}"))?;
     let title_selector = Selector::parse("a.result__a").map_err(|e| format!("selector: {e}"))?;
-    let snippet_selector = Selector::parse("a.result__snippet").map_err(|e| format!("selector: {e}"))?;
+    let snippet_selector =
+        Selector::parse("a.result__snippet").map_err(|e| format!("selector: {e}"))?;
 
     let mut results = Vec::new();
     for result in doc.select(&result_selector) {
@@ -147,13 +148,17 @@ pub(crate) fn is_ad_result(raw_url: &str) -> bool {
         return false;
     }
 
-    parsed.query_pairs().any(|(key, _)| {
-        matches!(key.as_ref(), "ad_domain" | "ad_provider" | "ad_type")
-    })
+    parsed
+        .query_pairs()
+        .any(|(key, _)| matches!(key.as_ref(), "ad_domain" | "ad_provider" | "ad_type"))
 }
 
 pub(crate) fn normalize_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
 
 pub(crate) fn detect_response_issue(body: &str) -> Option<String> {
@@ -209,10 +214,9 @@ mod tests {
 
     #[test]
     fn decodes_duckduckgo_redirect_url() {
-        let decoded = decode_duckduckgo_url(
-            "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage",
-        )
-        .unwrap();
+        let decoded =
+            decode_duckduckgo_url("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage")
+                .unwrap();
         assert_eq!(decoded, "https://example.com/page");
     }
 

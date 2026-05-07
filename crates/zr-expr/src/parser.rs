@@ -226,7 +226,7 @@ impl Parser {
                         match self.advance() {
                             Token::Ident(p) => parts.push(p),
                             other => {
-                                return Err(format!("expected field name after '.', got {other:?}"))
+                                return Err(format!("expected field name after '.', got {other:?}"));
                             }
                         }
                     }

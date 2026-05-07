@@ -1,5 +1,5 @@
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::BufRead;
 
 zacor_package::include_args!();
@@ -40,24 +40,30 @@ fn transform_fields(
     let records = zacor_package::parse_records(reader)?;
     let field_list = zacor_package::parse_field_list(&fields);
 
-    let output: Vec<Value> = records.into_iter().map(|record| {
-        if let Value::Object(mut map) = record {
-            for &f in &field_list {
-                if let Some(val) = map.get(f) {
-                    let new_val = transform(val);
-                    map.insert(f.to_string(), new_val);
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            if let Value::Object(mut map) = record {
+                for &f in &field_list {
+                    if let Some(val) = map.get(f) {
+                        let new_val = transform(val);
+                        map.insert(f.to_string(), new_val);
+                    }
                 }
+                Value::Object(map)
+            } else {
+                record
             }
-            Value::Object(map)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
 
-pub fn cmd_trim(args: &args::TrimArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_trim(
+    args: &args::TrimArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let char_to_trim = args.char.clone();
     let left = args.left;
     let right = args.right;
@@ -88,7 +94,10 @@ pub fn cmd_trim(args: &args::TrimArgs, input: Option<Box<dyn BufRead>>) -> Resul
     })
 }
 
-pub fn cmd_replace(args: &args::ReplaceArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_replace(
+    args: &args::ReplaceArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let find = args.find.clone();
     let replacement = args.replacement.clone();
     let all = args.all;
@@ -120,19 +129,36 @@ pub fn cmd_replace(args: &args::ReplaceArgs, input: Option<Box<dyn BufRead>>) ->
     })
 }
 
-pub fn cmd_upcase(args: &args::UpcaseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_upcase(
+    args: &args::UpcaseArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
-        if let Value::String(s) = v { Value::String(s.to_uppercase()) } else { v.clone() }
+        if let Value::String(s) = v {
+            Value::String(s.to_uppercase())
+        } else {
+            v.clone()
+        }
     })
 }
 
-pub fn cmd_downcase(args: &args::DowncaseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_downcase(
+    args: &args::DowncaseArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
-        if let Value::String(s) = v { Value::String(s.to_lowercase()) } else { v.clone() }
+        if let Value::String(s) = v {
+            Value::String(s.to_lowercase())
+        } else {
+            v.clone()
+        }
     })
 }
 
-pub fn cmd_capitalize(args: &args::CapitalizeArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_capitalize(
+    args: &args::CapitalizeArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::String(s) = v {
             let mut chars = s.chars();
@@ -147,13 +173,23 @@ pub fn cmd_capitalize(args: &args::CapitalizeArgs, input: Option<Box<dyn BufRead
     })
 }
 
-pub fn cmd_reverse(args: &args::ReverseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_reverse(
+    args: &args::ReverseArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
-        if let Value::String(s) = v { Value::String(s.chars().rev().collect()) } else { v.clone() }
+        if let Value::String(s) = v {
+            Value::String(s.chars().rev().collect())
+        } else {
+            v.clone()
+        }
     })
 }
 
-pub fn cmd_substring(args: &args::SubstringArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_substring(
+    args: &args::SubstringArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let range = args.range.clone();
     let parts: Vec<&str> = range.split("..").collect();
     let start: usize = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -172,7 +208,10 @@ pub fn cmd_substring(args: &args::SubstringArgs, input: Option<Box<dyn BufRead>>
     })
 }
 
-pub fn cmd_contains(args: &args::ContainsArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_contains(
+    args: &args::ContainsArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let term = args.term.clone();
     let ignore_case = args.ignore_case;
 
@@ -190,7 +229,10 @@ pub fn cmd_contains(args: &args::ContainsArgs, input: Option<Box<dyn BufRead>>) 
     })
 }
 
-pub fn cmd_starts_with(args: &args::StartsWithArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_starts_with(
+    args: &args::StartsWithArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let term = args.term.clone();
     let ignore_case = args.ignore_case;
 
@@ -208,7 +250,10 @@ pub fn cmd_starts_with(args: &args::StartsWithArgs, input: Option<Box<dyn BufRea
     })
 }
 
-pub fn cmd_ends_with(args: &args::EndsWithArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_ends_with(
+    args: &args::EndsWithArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let term = args.term.clone();
     let ignore_case = args.ignore_case;
 
@@ -226,13 +271,23 @@ pub fn cmd_ends_with(args: &args::EndsWithArgs, input: Option<Box<dyn BufRead>>)
     })
 }
 
-pub fn cmd_length(args: &args::LengthArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_length(
+    args: &args::LengthArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
-        if let Value::String(s) = v { json!(s.len()) } else { v.clone() }
+        if let Value::String(s) = v {
+            json!(s.len())
+        } else {
+            v.clone()
+        }
     })
 }
 
-pub fn cmd_index_of(args: &args::IndexOfArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_index_of(
+    args: &args::IndexOfArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let term = args.term.clone();
     let from_end = args.end;
 
@@ -250,7 +305,10 @@ pub fn cmd_index_of(args: &args::IndexOfArgs, input: Option<Box<dyn BufRead>>) -
     })
 }
 
-pub fn cmd_split(args: &args::SplitArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_split(
+    args: &args::SplitArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let separator = args.separator.clone();
     let use_regex = args.regex;
 
@@ -274,17 +332,21 @@ pub fn cmd_split(args: &args::SplitArgs, input: Option<Box<dyn BufRead>>) -> Res
     })
 }
 
-pub fn cmd_join(args: &args::JoinArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_join(
+    args: &args::JoinArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let separator = args.separator.clone();
 
     transform_fields(args.value.as_deref(), args.fields.as_deref(), input, |v| {
         if let Value::Array(arr) = v {
-            let parts: Vec<String> = arr.iter().map(|item| {
-                match item {
+            let parts: Vec<String> = arr
+                .iter()
+                .map(|item| match item {
                     Value::String(s) => s.clone(),
                     other => other.to_string(),
-                }
-            }).collect();
+                })
+                .collect();
             Value::String(parts.join(&separator))
         } else {
             v.clone()
@@ -292,7 +354,10 @@ pub fn cmd_join(args: &args::JoinArgs, input: Option<Box<dyn BufRead>>) -> Resul
     })
 }
 
-pub fn cmd_parse(args: &args::ParseArgs, input: Option<Box<dyn BufRead>>) -> Result<Vec<Value>, String> {
+pub fn cmd_parse(
+    args: &args::ParseArgs,
+    input: Option<Box<dyn BufRead>>,
+) -> Result<Vec<Value>, String> {
     let reader = input.ok_or("str parse: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
     let fields = resolve_fields(args.fields.as_deref());
@@ -306,26 +371,29 @@ pub fn cmd_parse(args: &args::ParseArgs, input: Option<Box<dyn BufRead>>) -> Res
         Regex::new(&regex_pattern).map_err(|e| format!("str parse: invalid pattern: {e}"))?
     };
 
-    let output: Vec<Value> = records.into_iter().map(|record| {
-        if let Value::Object(mut map) = record {
-            for &f in &field_list {
-                let s = match map.get(f) {
-                    Some(Value::String(s)) => s.clone(),
-                    _ => continue,
-                };
-                if let Some(caps) = re.captures(&s) {
-                    for name in re.capture_names().flatten() {
-                        if let Some(m) = caps.name(name) {
-                            map.insert(name.to_string(), json!(m.as_str()));
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            if let Value::Object(mut map) = record {
+                for &f in &field_list {
+                    let s = match map.get(f) {
+                        Some(Value::String(s)) => s.clone(),
+                        _ => continue,
+                    };
+                    if let Some(caps) = re.captures(&s) {
+                        for name in re.capture_names().flatten() {
+                            if let Some(m) = caps.name(name) {
+                                map.insert(name.to_string(), json!(m.as_str()));
+                            }
                         }
                     }
                 }
+                Value::Object(map)
+            } else {
+                record
             }
-            Value::Object(map)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
@@ -362,12 +430,15 @@ fn convert_pattern_to_regex(pattern: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 
@@ -425,7 +496,11 @@ mod tests {
     #[test]
     fn replace_first() {
         let data = r#"[{"path":"src/src/main.rs"}]"#;
-        let args: args::ReplaceArgs = make_args(&[("fields", json!("path")), ("find", json!("src")), ("replacement", json!("dist"))]);
+        let args: args::ReplaceArgs = make_args(&[
+            ("fields", json!("path")),
+            ("find", json!("src")),
+            ("replacement", json!("dist")),
+        ]);
         let result = cmd_replace(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["path"], "dist/src/main.rs");
     }
@@ -433,7 +508,12 @@ mod tests {
     #[test]
     fn replace_all() {
         let data = r#"[{"path":"src/src/main.rs"}]"#;
-        let args: args::ReplaceArgs = make_args(&[("fields", json!("path")), ("find", json!("src")), ("replacement", json!("dist")), ("all", json!(true))]);
+        let args: args::ReplaceArgs = make_args(&[
+            ("fields", json!("path")),
+            ("find", json!("src")),
+            ("replacement", json!("dist")),
+            ("all", json!(true)),
+        ]);
         let result = cmd_replace(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["path"], "dist/dist/main.rs");
     }
@@ -473,7 +553,8 @@ mod tests {
     #[test]
     fn substring_range() {
         let data = r#"[{"name":"hello world"}]"#;
-        let args: args::SubstringArgs = make_args(&[("fields", json!("name")), ("range", json!("0..5"))]);
+        let args: args::SubstringArgs =
+            make_args(&[("fields", json!("name")), ("range", json!("0..5"))]);
         let result = cmd_substring(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], "hello");
     }
@@ -481,7 +562,8 @@ mod tests {
     #[test]
     fn contains_test() {
         let data = r#"[{"name":"foobar"},{"name":"baz"}]"#;
-        let args: args::ContainsArgs = make_args(&[("fields", json!("name")), ("term", json!("foo"))]);
+        let args: args::ContainsArgs =
+            make_args(&[("fields", json!("name")), ("term", json!("foo"))]);
         let result = cmd_contains(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], true);
         assert_eq!(result[1]["name"], false);
@@ -490,7 +572,8 @@ mod tests {
     #[test]
     fn starts_with_test() {
         let data = r#"[{"name":"foobar"}]"#;
-        let args: args::StartsWithArgs = make_args(&[("fields", json!("name")), ("term", json!("foo"))]);
+        let args: args::StartsWithArgs =
+            make_args(&[("fields", json!("name")), ("term", json!("foo"))]);
         let result = cmd_starts_with(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], true);
     }
@@ -498,7 +581,8 @@ mod tests {
     #[test]
     fn ends_with_test() {
         let data = r#"[{"name":"main.rs"}]"#;
-        let args: args::EndsWithArgs = make_args(&[("fields", json!("name")), ("term", json!(".rs"))]);
+        let args: args::EndsWithArgs =
+            make_args(&[("fields", json!("name")), ("term", json!(".rs"))]);
         let result = cmd_ends_with(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], true);
     }
@@ -514,7 +598,8 @@ mod tests {
     #[test]
     fn index_of_test() {
         let data = r#"[{"name":"hello world"}]"#;
-        let args: args::IndexOfArgs = make_args(&[("fields", json!("name")), ("term", json!("world"))]);
+        let args: args::IndexOfArgs =
+            make_args(&[("fields", json!("name")), ("term", json!("world"))]);
         let result = cmd_index_of(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], 6);
     }
@@ -522,7 +607,8 @@ mod tests {
     #[test]
     fn index_of_not_found() {
         let data = r#"[{"name":"hello"}]"#;
-        let args: args::IndexOfArgs = make_args(&[("fields", json!("name")), ("term", json!("xyz"))]);
+        let args: args::IndexOfArgs =
+            make_args(&[("fields", json!("name")), ("term", json!("xyz"))]);
         let result = cmd_index_of(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], -1);
     }
@@ -530,7 +616,8 @@ mod tests {
     #[test]
     fn split_test() {
         let data = r#"[{"name":"a,b,c"}]"#;
-        let args: args::SplitArgs = make_args(&[("fields", json!("name")), ("separator", json!(","))]);
+        let args: args::SplitArgs =
+            make_args(&[("fields", json!("name")), ("separator", json!(","))]);
         let result = cmd_split(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], json!(["a", "b", "c"]));
     }
@@ -538,7 +625,8 @@ mod tests {
     #[test]
     fn join_test() {
         let data = r#"[{"name":["a","b","c"]}]"#;
-        let args: args::JoinArgs = make_args(&[("fields", json!("name")), ("separator", json!("-"))]);
+        let args: args::JoinArgs =
+            make_args(&[("fields", json!("name")), ("separator", json!("-"))]);
         let result = cmd_join(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], "a-b-c");
     }
@@ -546,7 +634,10 @@ mod tests {
     #[test]
     fn parse_simple_pattern() {
         let data = r#"[{"log":"192.168.1.1 - admin"}]"#;
-        let args: args::ParseArgs = make_args(&[("fields", json!("log")), ("pattern", json!("{ip} - {user}"))]);
+        let args: args::ParseArgs = make_args(&[
+            ("fields", json!("log")),
+            ("pattern", json!("{ip} - {user}")),
+        ]);
         let result = cmd_parse(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["ip"], "192.168.1.1");
         assert_eq!(result[0]["user"], "admin");
@@ -555,7 +646,11 @@ mod tests {
     #[test]
     fn parse_regex_pattern() {
         let data = r#"[{"log":"192.168.1.1 - admin"}]"#;
-        let args: args::ParseArgs = make_args(&[("fields", json!("log")), ("pattern", json!("(?P<ip>\\S+) - (?P<user>\\S+)")), ("regex", json!(true))]);
+        let args: args::ParseArgs = make_args(&[
+            ("fields", json!("log")),
+            ("pattern", json!("(?P<ip>\\S+) - (?P<user>\\S+)")),
+            ("regex", json!(true)),
+        ]);
         let result = cmd_parse(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["ip"], "192.168.1.1");
         assert_eq!(result[0]["user"], "admin");
@@ -581,7 +676,11 @@ mod tests {
     #[test]
     fn ignore_case_contains() {
         let data = r#"[{"name":"FooBar"}]"#;
-        let args: args::ContainsArgs = make_args(&[("fields", json!("name")), ("term", json!("foo")), ("ignore-case", json!(true))]);
+        let args: args::ContainsArgs = make_args(&[
+            ("fields", json!("name")),
+            ("term", json!("foo")),
+            ("ignore-case", json!(true)),
+        ]);
         let result = cmd_contains(&args, json_input(data)).unwrap();
         assert_eq!(result[0]["name"], true);
     }

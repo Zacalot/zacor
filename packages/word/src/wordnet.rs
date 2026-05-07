@@ -151,7 +151,10 @@ mod tests {
         let synset = wn.get_synset(pos, id);
         assert!(synset.is_some(), "synset for dog should exist");
         let synset = synset.unwrap();
-        assert!(!synset.definition.is_empty(), "definition should not be empty");
+        assert!(
+            !synset.definition.is_empty(),
+            "definition should not be empty"
+        );
     }
 
     #[test]

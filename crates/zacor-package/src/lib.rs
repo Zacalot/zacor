@@ -24,11 +24,11 @@ pub use data::{ensure_data_dir, ensure_data_dir_at};
 pub fn path_str(p: &std::path::Path) -> String {
     p.display().to_string().replace('\\', "/")
 }
-pub use run::{protocol, Context, FromArgs};
 #[cfg(not(target_family = "wasm"))]
 pub use run::service_loop;
 #[cfg(target_family = "wasm")]
 pub use run::service_loop_stdin;
+pub use run::{Context, FromArgs, protocol};
 
 pub use serde;
 pub use serde::Serialize;

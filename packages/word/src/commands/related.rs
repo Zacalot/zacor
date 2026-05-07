@@ -56,8 +56,10 @@ pub fn cmd_related(args: &RelatedArgs) -> Result<Vec<Value>, String> {
     }
     // Sort by frequency descending so most common sense comes first
     sense_entries.sort_by(|a, b| b.2.cmp(&a.2));
-    let selected_senses: Vec<(POS, SynsetId)> =
-        sense_entries.into_iter().map(|(p, id, _)| (p, id)).collect();
+    let selected_senses: Vec<(POS, SynsetId)> = sense_entries
+        .into_iter()
+        .map(|(p, id, _)| (p, id))
+        .collect();
 
     let mut results = Vec::new();
     let mut seen = HashSet::new();
@@ -245,16 +247,36 @@ mod tests {
 
     #[test]
     fn test_depth_control() {
-        let d1 = cmd_related(&make_args("dog", Some("hypernym"), Some(1), Some("noun"), None)).unwrap();
-        let d2 = cmd_related(&make_args("dog", Some("hypernym"), Some(2), Some("noun"), None)).unwrap();
-        assert!(d2.len() >= d1.len(), "depth 2 should have at least as many results as depth 1");
+        let d1 = cmd_related(&make_args(
+            "dog",
+            Some("hypernym"),
+            Some(1),
+            Some("noun"),
+            None,
+        ))
+        .unwrap();
+        let d2 = cmd_related(&make_args(
+            "dog",
+            Some("hypernym"),
+            Some(2),
+            Some("noun"),
+            None,
+        ))
+        .unwrap();
+        assert!(
+            d2.len() >= d1.len(),
+            "depth 2 should have at least as many results as depth 1"
+        );
     }
 
     #[test]
     fn test_sense_selection() {
         let all = cmd_related(&make_args("bank", None, None, None, None)).unwrap();
         let s1 = cmd_related(&make_args("bank", None, None, None, Some(1))).unwrap();
-        assert!(s1.len() <= all.len(), "filtering by sense should reduce results");
+        assert!(
+            s1.len() <= all.len(),
+            "filtering by sense should reduce results"
+        );
     }
 
     #[test]

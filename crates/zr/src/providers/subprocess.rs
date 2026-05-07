@@ -60,11 +60,15 @@ fn exec(params: &serde_json::Value) -> Result<serde_json::Value, CapabilityError
     }
 
     let stdin_bytes = match params.get("stdin").and_then(|value| value.as_str()) {
-        Some(stdin) if !stdin.is_empty() => Some(protocol::base64_decode(stdin).map_err(|error| CapabilityError::from_io(&error))?),
+        Some(stdin) if !stdin.is_empty() => {
+            Some(protocol::base64_decode(stdin).map_err(|error| CapabilityError::from_io(&error))?)
+        }
         _ => None,
     };
 
-    let mut child = child.spawn().map_err(|error| CapabilityError::from_io(&error))?;
+    let mut child = child
+        .spawn()
+        .map_err(|error| CapabilityError::from_io(&error))?;
     if let Some(stdin_bytes) = stdin_bytes
         && let Some(mut stdin) = child.stdin.take()
     {
@@ -73,7 +77,9 @@ fn exec(params: &serde_json::Value) -> Result<serde_json::Value, CapabilityError
             .map_err(|error| CapabilityError::from_io(&error))?;
     }
 
-    let output = child.wait_with_output().map_err(|error| CapabilityError::from_io(&error))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| CapabilityError::from_io(&error))?;
     Ok(json!({
         "exit_code": output.status.code().unwrap_or(-1),
         "stdout_base64": protocol::base64_encode(&output.stdout),

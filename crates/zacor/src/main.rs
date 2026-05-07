@@ -94,7 +94,8 @@ pub(crate) fn resolve_zr_daemon_binary() -> std::path::PathBuf {
             .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
             .map(|entry| entry.path())
             .filter(|path| {
-                path.extension().and_then(|ext| ext.to_str()) == Some(std::env::consts::EXE_EXTENSION)
+                path.extension().and_then(|ext| ext.to_str())
+                    == Some(std::env::consts::EXE_EXTENSION)
                     && path
                         .file_stem()
                         .and_then(|stem| stem.to_str())
@@ -138,7 +139,9 @@ fn find_zr_artifact(dir: &std::path::Path) -> Option<std::path::PathBuf> {
         .ok()?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(std::env::consts::EXE_EXTENSION))
+        .filter(|path| {
+            path.extension().and_then(|ext| ext.to_str()) == Some(std::env::consts::EXE_EXTENSION)
+        })
         .filter(|path| {
             path.file_stem()
                 .and_then(|stem| stem.to_str())

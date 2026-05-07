@@ -1,5 +1,5 @@
-use jiff::{Span, Zoned};
 use jiff::tz::TimeZone;
+use jiff::{Span, Zoned};
 
 /// Unified date parsing pipeline: unix timestamp -> Jiff native -> parse_datetime
 pub fn parse_date(input: &str, tz: &TimeZone) -> Result<Zoned, String> {
@@ -15,12 +15,16 @@ pub fn parse_date(input: &str, tz: &TimeZone) -> Result<Zoned, String> {
 
     // Try parsing as civil datetime then applying timezone
     if let Ok(dt) = input.parse::<jiff::civil::DateTime>() {
-        return dt.to_zoned(tz.clone()).map_err(|e| format!("failed to apply timezone: {e}"));
+        return dt
+            .to_zoned(tz.clone())
+            .map_err(|e| format!("failed to apply timezone: {e}"));
     }
 
     // Try parsing as civil date then applying timezone
     if let Ok(d) = input.parse::<jiff::civil::Date>() {
-        let dt = d.to_zoned(tz.clone()).map_err(|e| format!("failed to apply timezone: {e}"))?;
+        let dt = d
+            .to_zoned(tz.clone())
+            .map_err(|e| format!("failed to apply timezone: {e}"))?;
         return Ok(dt);
     }
 
@@ -119,7 +123,11 @@ mod tests {
         let tz = TimeZone::UTC;
         // "3 days ago" should parse without error
         let result = parse_date("3 days ago", &tz);
-        assert!(result.is_ok(), "failed to parse '3 days ago': {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "failed to parse '3 days ago': {:?}",
+            result.err()
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use super::{DaemonResponse, ServiceStatusEntry, HEALTH_CHECK_TIMEOUT};
+use super::{DaemonResponse, HEALTH_CHECK_TIMEOUT, ServiceStatusEntry};
 use subprocess::wait_for_health;
 
 use wasm::WasmServiceHandle;
@@ -223,7 +223,9 @@ pub(super) fn stop_managed(svc: ManagedService) {
             }
         }
         ManagedKind::Wasm(mut handle) => {
-            handle.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+            handle
+                .shutdown
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = std::net::TcpStream::connect(format!("127.0.0.1:{}", svc.port));
             if let Some(t) = handle.accept_thread.take() {
                 let _ = t.join();
@@ -254,7 +256,8 @@ pub(super) fn handle_stop_service(
 }
 
 fn load_package_def(home: &Path, name: &str) -> Result<(PackageDefinition, String)> {
-    let receipt = receipt::read(home, name)?.ok_or_else(|| anyhow!("package '{}' not found", name))?;
+    let receipt =
+        receipt::read(home, name)?.ok_or_else(|| anyhow!("package '{}' not found", name))?;
     let version = receipt.current.clone();
     let def = crate::wasm_manifest::load_from_store(home, name, &version)?;
     Ok((def, version))

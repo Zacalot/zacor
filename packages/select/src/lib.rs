@@ -19,10 +19,7 @@ pub fn cmd_reject(
     reject(&args.fields, reader)
 }
 
-pub fn select(
-    fields_str: &str,
-    input: Box<dyn BufRead>,
-) -> Result<Vec<Value>, String> {
+pub fn select(fields_str: &str, input: Box<dyn BufRead>) -> Result<Vec<Value>, String> {
     let fields = zacor_package::parse_field_list(fields_str);
 
     if fields.is_empty() {
@@ -54,10 +51,7 @@ pub fn select(
     Ok(output)
 }
 
-pub fn reject(
-    fields_str: &str,
-    input: Box<dyn BufRead>,
-) -> Result<Vec<Value>, String> {
+pub fn reject(fields_str: &str, input: Box<dyn BufRead>) -> Result<Vec<Value>, String> {
     let fields = zacor_package::parse_field_list(fields_str);
 
     if fields.is_empty() {
@@ -66,16 +60,19 @@ pub fn reject(
 
     let records = zacor_package::parse_records(input)?;
 
-    let output: Vec<Value> = records.into_iter().map(|record| {
-        if let Value::Object(mut map) = record {
-            for &f in &fields {
-                map.remove(f);
+    let output: Vec<Value> = records
+        .into_iter()
+        .map(|record| {
+            if let Value::Object(mut map) = record {
+                for &f in &fields {
+                    map.remove(f);
+                }
+                Value::Object(map)
+            } else {
+                record
             }
-            Value::Object(map)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
@@ -152,7 +149,8 @@ mod tests {
     #[test]
     fn from_args_string_field() {
         use zacor_package::FromArgs;
-        let map: std::collections::BTreeMap<String, _> = [("fields".into(), serde_json::json!("name"))].into();
+        let map: std::collections::BTreeMap<String, _> =
+            [("fields".into(), serde_json::json!("name"))].into();
         let args = args::DefaultArgs::from_args(&map).unwrap();
         assert_eq!(args.fields, "name");
     }

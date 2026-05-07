@@ -3,10 +3,7 @@ use std::io::BufRead;
 
 zacor_package::include_args!();
 
-pub fn filter(
-    expr: &str,
-    input: Box<dyn BufRead>,
-) -> Result<Vec<Value>, String> {
+pub fn filter(expr: &str, input: Box<dyn BufRead>) -> Result<Vec<Value>, String> {
     if expr.is_empty() {
         return Err("where: expression is required".into());
     }
@@ -49,7 +46,8 @@ mod tests {
 
     #[test]
     fn compound_predicate() {
-        let data = r#"[{"size":200,"type":"file"},{"size":50,"type":"file"},{"size":200,"type":"dir"}]"#;
+        let data =
+            r#"[{"size":200,"type":"file"},{"size":50,"type":"file"},{"size":200,"type":"dir"}]"#;
         let result = filter("size > 100 and type == 'file'", input(data)).unwrap();
         assert_eq!(result.len(), 1);
     }

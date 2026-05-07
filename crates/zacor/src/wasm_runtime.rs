@@ -146,8 +146,8 @@ impl WasmHost {
     /// install time so the first dispatch doesn't pay cranelift cost.
     pub fn precompile(&self, wasm_path: &Path) -> Result<PathBuf> {
         let cwasm_path = wasm_path.with_extension("cwasm");
-        let wasm_bytes = std::fs::read(wasm_path)
-            .with_context(|| format!("reading {}", wasm_path.display()))?;
+        let wasm_bytes =
+            std::fs::read(wasm_path).with_context(|| format!("reading {}", wasm_path.display()))?;
         let serialized = self
             .engine
             .precompile_module(&wasm_bytes)
@@ -161,11 +161,7 @@ impl WasmHost {
     /// The caller drives the session loop by writing INVOKE and
     /// reading frames through the returned sync `Write` / `BufRead`
     /// handles. Call `controller.finish()` once the session terminates.
-    pub fn invoke(
-        &self,
-        module: Arc<Module>,
-        env: Vec<(String, String)>,
-    ) -> Result<WasmSession> {
+    pub fn invoke(&self, module: Arc<Module>, env: Vec<(String, String)>) -> Result<WasmSession> {
         let handle = self.runtime.handle().clone();
         let engine = self.engine.clone();
 
@@ -181,7 +177,9 @@ impl WasmHost {
 
                     let mut builder = WasiCtxBuilder::new();
                     builder
-                        .stdin(AsyncStdinStream::new(AsyncReadStream::new(wasm_stdin_reader)))
+                        .stdin(AsyncStdinStream::new(AsyncReadStream::new(
+                            wasm_stdin_reader,
+                        )))
                         .stdout(AsyncStdoutStream::new(AsyncWriteStream::new(
                             PIPE_CAPACITY,
                             wasm_stdout_writer,
@@ -304,11 +302,7 @@ mod tests {
             .join("wasm32-wasip1")
             .join("release")
             .join(format!("{}.wasm", name));
-        if p.exists() {
-            Some(p)
-        } else {
-            None
-        }
+        if p.exists() { Some(p) } else { None }
     }
 
     fn echo_wasm_path() -> Option<std::path::PathBuf> {
@@ -398,7 +392,8 @@ mod tests {
             controller,
         } = host.invoke(module, vec![]).expect("invoke");
 
-        let invoke = r#"{"type":"invoke","command":"default","args":{"file":"/virtual/greeting.txt"}}"#;
+        let invoke =
+            r#"{"type":"invoke","command":"default","args":{"file":"/virtual/greeting.txt"}}"#;
         writeln!(writer, "{}", invoke).expect("write invoke");
         writer.flush().expect("flush");
 
@@ -508,8 +503,7 @@ mod tests {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let v: serde_json::Value =
-                    serde_json::from_str(trimmed).expect("parse frame");
+                let v: serde_json::Value = serde_json::from_str(trimmed).expect("parse frame");
                 let ty = v.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
                 match ty {

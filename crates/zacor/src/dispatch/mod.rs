@@ -62,12 +62,13 @@ fn resolve(home: &Path, name: &str) -> Result<ResolvedPackage> {
         );
     }
 
-    let definition = crate::wasm_manifest::load_from_store(home, name, &version).with_context(|| {
-        format!(
-            "corrupt manifest for '{}' v{}\nhint: reinstall with `zacor install <source>`",
-            name, version
-        )
-    })?;
+    let definition =
+        crate::wasm_manifest::load_from_store(home, name, &version).with_context(|| {
+            format!(
+                "corrupt manifest for '{}' v{}\nhint: reinstall with `zacor install <source>`",
+                name, version
+            )
+        })?;
 
     Ok(ResolvedPackage {
         receipt,
@@ -103,7 +104,12 @@ fn verify_dep_declared(caller: Option<&PackageDefinition>, package: &str) -> Res
     if caller.name == package {
         return Ok(());
     }
-    if caller.depends.packages.iter().any(|dep| dep.name == package) {
+    if caller
+        .depends
+        .packages
+        .iter()
+        .any(|dep| dep.name == package)
+    {
         return Ok(());
     }
 
@@ -248,9 +254,7 @@ fn validate_command_input_mode_for_stdin(
     stdin_is_terminal: bool,
 ) -> Result<()> {
     if command.input.is_some() && command.inline_input_fallback.is_none() && stdin_is_terminal {
-        bail!(
-            "this command requires piped stdin; provide input via a pipe or file-backed stdin"
-        );
+        bail!("this command requires piped stdin; provide input via a pipe or file-backed stdin");
     }
 
     Ok(())
@@ -463,7 +467,12 @@ fn execute_wasm(
         )
     })?;
 
-    let wasm_path = paths::store_wasm_path(home, &resolved.definition.name, &resolved.version, wasm_name);
+    let wasm_path = paths::store_wasm_path(
+        home,
+        &resolved.definition.name,
+        &resolved.version,
+        wasm_name,
+    );
     if !wasm_path.exists() {
         return Err(crate::error::DispatchError::ArtifactMissing(wasm_path).into());
     }
@@ -579,7 +588,8 @@ fn invoke_package_local(
     let resolved = resolve(home, package)?;
     let command = find_command(&resolved.definition.commands, command_path)?;
     validate_command_input_mode(command)?;
-    let (env_vars, placeholders) = build_invocation_env(home, &resolved, command_path, parsed_flags)?;
+    let (env_vars, placeholders) =
+        build_invocation_env(home, &resolved, command_path, parsed_flags)?;
 
     if resolved.definition.wasm.is_some() {
         return execute_wasm_with_handler(
@@ -635,6 +645,32 @@ fn invoke_package_local(
     bail!(
         "cross-package invocation requires a protocol-enabled package, got '{}'",
         resolved.definition.name
+    )
+}
+
+pub fn invoke_local(
+    home: &Path,
+    package: &str,
+    command_path: &str,
+    parsed_flags: &BTreeMap<String, String>,
+    on_output: &mut dyn FnMut(serde_json::Value) -> std::result::Result<(), String>,
+) -> Result<i32> {
+    let capabilities = crate::providers::build_default_registry();
+    let package_router = LocalPackageRouter {
+        home,
+        capabilities: &capabilities,
+    };
+
+    invoke_package_local(
+        home,
+        package,
+        command_path,
+        parsed_flags,
+        &capabilities,
+        0,
+        DEFAULT_MAX_CALL_DEPTH,
+        &package_router,
+        on_output,
     )
 }
 
@@ -798,7 +834,12 @@ fn execute_wasm_with_handler(
             resolved.definition.name
         )
     })?;
-    let wasm_path = paths::store_wasm_path(home, &resolved.definition.name, &resolved.version, wasm_name);
+    let wasm_path = paths::store_wasm_path(
+        home,
+        &resolved.definition.name,
+        &resolved.version,
+        wasm_name,
+    );
     if !wasm_path.exists() {
         return Err(crate::error::DispatchError::ArtifactMissing(wasm_path).into());
     }
@@ -866,7 +907,11 @@ fn execute_wasm_with_handler(
         env_vars,
     ) {
         Ok(Some(stream)) => {
-            let tcp_reader = BufReader::new(stream.try_clone().context("cloning daemon stream for session read")?);
+            let tcp_reader = BufReader::new(
+                stream
+                    .try_clone()
+                    .context("cloning daemon stream for session read")?,
+            );
             let mut output_handler = CallbackOutputHandler::new(on_output);
             let result = run_protocol_session_with_handler(
                 tcp_reader,
@@ -893,7 +938,10 @@ fn execute_wasm_with_handler(
 
     let host = wasm_runtime::WasmHost::shared()?;
     let module = host.load_module(&wasm_path)?;
-    let env: Vec<(String, String)> = env_vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let env: Vec<(String, String)> = env_vars
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     let wasm_runtime::WasmSession {
         writer,
         reader,

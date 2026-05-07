@@ -6,9 +6,7 @@ fn main() {
                 .description("Select fields from JSON input")
                 .args(&[ArgSchemaInfo::string("fields").required()])
                 .input(InputKind::Jsonl)
-                .output(OutputSpec::table(&[
-                    FieldSchemaInfo::string("value"),
-                ])),
+                .output(OutputSpec::table(&[FieldSchemaInfo::string("value")])),
         )
         .command(
             CommandSpec::named("reject")

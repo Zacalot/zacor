@@ -87,13 +87,7 @@ mod tests {
 
     #[test]
     fn template_field_present() {
-        let r = cmd_sentence(&make_args(
-            Some("the {noun}"),
-            false,
-            Some(1),
-            Some(1.0),
-        ))
-        .unwrap();
+        let r = cmd_sentence(&make_args(Some("the {noun}"), false, Some(1), Some(1.0))).unwrap();
         assert_eq!(r[0]["template"], "the {noun}");
     }
 

@@ -54,8 +54,8 @@ fn list_words_in_domain(
     domain_str: &str,
     count_limit: Option<usize>,
 ) -> Result<Vec<Value>, String> {
-    let domain_num = match_domain(domain_str)
-        .ok_or_else(|| format!("unknown domain: {domain_str}"))?;
+    let domain_num =
+        match_domain(domain_str).ok_or_else(|| format!("unknown domain: {domain_str}"))?;
 
     let mut results = Vec::new();
     let mut seen = std::collections::HashSet::new();

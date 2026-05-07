@@ -67,7 +67,8 @@ pub fn parse_fallbacks(
     let mut fallbacks = Vec::new();
     for item in raw.split(',') {
         let name = normalize_engine_name(item);
-        if name.is_empty() || name == primary || fallbacks.iter().any(|existing| existing == &name) {
+        if name.is_empty() || name == primary || fallbacks.iter().any(|existing| existing == &name)
+        {
             continue;
         }
         if !registry.contains(&name) {
@@ -194,7 +195,8 @@ mod tests {
     #[test]
     fn parses_known_fallbacks() {
         let registry = default_registry();
-        let fallbacks = parse_fallbacks("duckduckgo-lite,duckduckgo", DEFAULT_ENGINE, &registry).unwrap();
+        let fallbacks =
+            parse_fallbacks("duckduckgo-lite,duckduckgo", DEFAULT_ENGINE, &registry).unwrap();
         assert_eq!(fallbacks, vec!["duckduckgo-lite".to_string()]);
     }
 

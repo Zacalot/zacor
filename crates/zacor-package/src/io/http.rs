@@ -117,15 +117,12 @@ pub fn fetch(request: &Request) -> io::Result<Response> {
 
     let data = crate::runtime::capability_call("http", "fetch", params)?;
 
-    let status = data
-        .get("status")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "http.fetch response missing status",
-            )
-        })? as u16;
+    let status = data.get("status").and_then(|v| v.as_u64()).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "http.fetch response missing status",
+        )
+    })? as u16;
 
     let headers = data
         .get("headers")

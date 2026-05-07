@@ -11,7 +11,9 @@ fn main() {
         .command(
             CommandSpec::named("drop")
                 .description("Drop the last N records")
-                .args(&[ArgSchemaInfo::integer("count").optional().default(DefaultValue::Number(1))])
+                .args(&[ArgSchemaInfo::integer("count")
+                    .optional()
+                    .default(DefaultValue::Number(1))])
                 .input(InputKind::Jsonl)
                 .output(OutputSpec::table(&[])),
         )

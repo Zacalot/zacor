@@ -42,9 +42,9 @@ pub fn calc(args: args::DefaultArgs) -> Result<CalcRecord, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
     use serde_json::json;
+    use std::collections::BTreeMap;
+    use zacor_package::FromArgs;
 
     fn eval(expr: &str) -> Result<f64, String> {
         let map: BTreeMap<String, _> = [("expr".into(), json!(expr))].into();

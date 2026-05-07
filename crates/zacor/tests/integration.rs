@@ -46,7 +46,8 @@ fn cargo_bin(name: &str) -> PathBuf {
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|candidate| {
-            candidate.extension().and_then(|ext| ext.to_str()) == Some(std::env::consts::EXE_EXTENSION)
+            candidate.extension().and_then(|ext| ext.to_str())
+                == Some(std::env::consts::EXE_EXTENSION)
                 && candidate
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -1019,9 +1020,7 @@ fn test_zacor_install_wasm_cat_reads_real_file() {
         stdout
     );
     assert!(
-        stdout.contains("line one")
-            && stdout.contains("line two")
-            && stdout.contains("line three"),
+        stdout.contains("line one") && stdout.contains("line two") && stdout.contains("line three"),
         "cat output should include all lines. stdout: {}",
         stdout
     );

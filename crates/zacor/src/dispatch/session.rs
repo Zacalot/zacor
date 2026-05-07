@@ -1,14 +1,14 @@
 use crate::error::*;
-use crate::package_definition::{CommandDefinition, InlineInputFallback, OutputDeclaration, PackageDefinition};
+use crate::package_definition::{
+    CommandDefinition, InlineInputFallback, OutputDeclaration, PackageDefinition,
+};
 use crate::render::RenderMode;
+use serde_json::Value;
 use serde_json::json;
 use std::io::{BufRead, BufWriter, IsTerminal, StdoutLock, Write};
-use serde_json::Value;
 use zacor_host::capability::CapabilityRegistry;
 use zacor_host::router::PackageRouter;
-use zacor_host::session::{
-    InputSource, OutputHandler, SessionConfig, StdioTransport, run_session,
-};
+use zacor_host::session::{InputSource, OutputHandler, SessionConfig, StdioTransport, run_session};
 use zacor_package::protocol::Message;
 
 use super::OutputMode;

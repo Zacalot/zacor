@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::BufRead;
 
 zacor_package::include_args!();
@@ -37,9 +37,11 @@ fn parse_string(s: &str) -> Result<Vec<Value>, String> {
     let mut records = Vec::new();
     for line in trimmed.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
-        let val: Value = serde_json::from_str(line)
-            .map_err(|e| format!("combine: invalid JSON: {e}"))?;
+        if line.is_empty() {
+            continue;
+        }
+        let val: Value =
+            serde_json::from_str(line).map_err(|e| format!("combine: invalid JSON: {e}"))?;
         match val {
             Value::Array(arr) => records.extend(arr),
             other => records.push(other),
@@ -54,7 +56,10 @@ pub fn cmd_append(
 ) -> Result<Vec<Value>, String> {
     let reader = input.ok_or("combine append: requires piped input")?;
     let mut records = zacor_package::parse_records(reader)?;
-    let second = load_second_source(args.file.as_deref().unwrap_or(""), args.records.as_deref().unwrap_or(""))?;
+    let second = load_second_source(
+        args.file.as_deref().unwrap_or(""),
+        args.records.as_deref().unwrap_or(""),
+    )?;
     records.extend(second);
     Ok(records)
 }
@@ -65,7 +70,10 @@ pub fn cmd_prepend(
 ) -> Result<Vec<Value>, String> {
     let reader = input.ok_or("combine prepend: requires piped input")?;
     let records = zacor_package::parse_records(reader)?;
-    let mut second = load_second_source(args.file.as_deref().unwrap_or(""), args.records.as_deref().unwrap_or(""))?;
+    let mut second = load_second_source(
+        args.file.as_deref().unwrap_or(""),
+        args.records.as_deref().unwrap_or(""),
+    )?;
     second.extend(records);
     Ok(second)
 }
@@ -78,18 +86,22 @@ pub fn cmd_merge(
     let left = zacor_package::parse_records(reader)?;
     let right = load_file_source(args.file.as_deref().unwrap_or(""))?;
 
-    let output: Vec<Value> = left.into_iter().enumerate().map(|(i, record)| {
-        if let Value::Object(mut map) = record {
-            if let Some(Value::Object(rmap)) = right.get(i) {
-                for (k, v) in rmap {
-                    map.insert(k.clone(), v.clone());
+    let output: Vec<Value> = left
+        .into_iter()
+        .enumerate()
+        .map(|(i, record)| {
+            if let Value::Object(mut map) = record {
+                if let Some(Value::Object(rmap)) = right.get(i) {
+                    for (k, v) in rmap {
+                        map.insert(k.clone(), v.clone());
+                    }
                 }
+                Value::Object(map)
+            } else {
+                record
             }
-            Value::Object(map)
-        } else {
-            record
-        }
-    }).collect();
+        })
+        .collect();
 
     Ok(output)
 }
@@ -113,9 +125,11 @@ pub fn cmd_join(
 
     // Build right index
     let right_index: std::collections::HashMap<String, Vec<&Value>> = {
-        let mut idx: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
+        let mut idx: std::collections::HashMap<String, Vec<&Value>> =
+            std::collections::HashMap::new();
         for r in &right {
-            let key = r.as_object()
+            let key = r
+                .as_object()
                 .and_then(|m| m.get(right_key))
                 .map(|v| value_to_key(v))
                 .unwrap_or_default();
@@ -128,7 +142,8 @@ pub fn cmd_join(
     let mut right_matched: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     for lrec in &left {
-        let lkey = lrec.as_object()
+        let lkey = lrec
+            .as_object()
             .and_then(|m| m.get(left_key.as_str()))
             .map(|v| value_to_key(v))
             .unwrap_or_default();
@@ -139,7 +154,8 @@ pub fn cmd_join(
                 output.push(merged);
                 // Track matched right records
                 for (i, r) in right.iter().enumerate() {
-                    let rk = r.as_object()
+                    let rk = r
+                        .as_object()
                         .and_then(|m| m.get(right_key))
                         .map(|v| value_to_key(v))
                         .unwrap_or_default();
@@ -206,7 +222,9 @@ pub fn cmd_zip(
     let right = load_file_source(args.file.as_deref().unwrap_or(""))?;
 
     let len = left.len().min(right.len());
-    let output: Vec<Value> = left.into_iter().zip(right.into_iter())
+    let output: Vec<Value> = left
+        .into_iter()
+        .zip(right.into_iter())
         .take(len)
         .map(|(l, r)| json!({"left": l, "right": r}))
         .collect();
@@ -218,12 +236,15 @@ pub fn cmd_zip(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::io::Cursor;
     use zacor_package::FromArgs;
-    use std::collections::BTreeMap;
 
     fn make_args<T: FromArgs>(pairs: &[(&str, Value)]) -> T {
-        let map: BTreeMap<String, Value> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         T::from_args(&map).unwrap()
     }
 

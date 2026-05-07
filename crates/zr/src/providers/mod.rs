@@ -15,7 +15,9 @@ pub use subprocess::SubprocessProvider;
 
 pub fn build_default_registry() -> CapabilityRegistry {
     let mut registry = CapabilityRegistry::new();
-    registry.register(Arc::new(FsProvider)).expect("unique fs provider");
+    registry
+        .register(Arc::new(FsProvider))
+        .expect("unique fs provider");
     registry
         .register(Arc::new(ClipboardProvider))
         .expect("unique clipboard provider");

@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::dispatch;
 use super::capability_router::CapabilityRouter;
+use super::dispatch;
 use super::module_cache::LibraryPool;
 use super::service_supervisor::{self, ManagedService};
 use super::{DAEMON_PORT, DaemonControl, DaemonRequest, DaemonResponse};
@@ -37,7 +37,10 @@ pub(super) fn handle_connection(
     }
 
     let response = match req.request.as_str() {
-        "ping" => DaemonResponse { ok: true, ..Default::default() },
+        "ping" => DaemonResponse {
+            ok: true,
+            ..Default::default()
+        },
         "status" => service_supervisor::handle_status(services),
         "start-service" => {
             let name = req.name.as_deref().unwrap_or("");
@@ -58,7 +61,10 @@ pub(super) fn handle_connection(
         "shutdown" => {
             control.shutdown_all();
             let _ = TcpStream::connect(format!("127.0.0.1:{}", DAEMON_PORT));
-            DaemonResponse { ok: true, ..Default::default() }
+            DaemonResponse {
+                ok: true,
+                ..Default::default()
+            }
         }
         "capability-forward" => {
             let domain = req.domain.as_deref().unwrap_or("");
@@ -66,10 +72,13 @@ pub(super) fn handle_connection(
             if domain.is_empty() || op.is_empty() {
                 DaemonResponse {
                     ok: false,
-                    error: Some(serde_json::to_string(&zacor_host::protocol::CapabilityError {
-                        kind: "invalid_input".into(),
-                        message: "capability-forward requires domain and op".into(),
-                    }).unwrap()),
+                    error: Some(
+                        serde_json::to_string(&zacor_host::protocol::CapabilityError {
+                            kind: "invalid_input".into(),
+                            message: "capability-forward requires domain and op".into(),
+                        })
+                        .unwrap(),
+                    ),
                     ..Default::default()
                 }
             } else {
