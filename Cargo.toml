@@ -9,6 +9,7 @@ members = [
     "crates/zr",
     "crates/zr-daemon",
     "crates/zred",
+    "crates/zri",
     "crates/zr-client",
     "crates/zr-expr",
 

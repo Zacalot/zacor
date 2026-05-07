@@ -7546,6 +7546,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zri"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "zstd"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
