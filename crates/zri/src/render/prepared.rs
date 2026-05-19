@@ -1,4 +1,4 @@
-use super::{Color, Frame, Point, Primitive, Rect, Size, Stroke};
+use super::{Color, Frame, Point, Primitive, Rect, Size, Stroke, SurfaceFallback};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedFrame {
@@ -56,6 +56,36 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
                     prepared.rendered_primitives += 1;
                 }
             }
+            Primitive::SurfaceSlot { rect, fallback, .. } => match fallback {
+                SurfaceFallback::None => {
+                    prepared.unsupported_primitives += 1;
+                }
+                SurfaceFallback::FillRect { color } => {
+                    if push_fill_rect(
+                        &mut prepared.rect_vertices,
+                        frame.size,
+                        *rect,
+                        item.clip,
+                        *color,
+                    ) {
+                        prepared.rendered_primitives += 1;
+                    }
+                }
+                SurfaceFallback::StrokeRect { stroke } => {
+                    if push_stroke_rect(
+                        &mut prepared.rect_vertices,
+                        frame.size,
+                        *rect,
+                        item.clip,
+                        *stroke,
+                    ) {
+                        prepared.rendered_primitives += 1;
+                    }
+                }
+                SurfaceFallback::Text { .. } => {
+                    prepared.unsupported_primitives += 1;
+                }
+            },
             Primitive::Line { .. } | Primitive::Text { .. } => {
                 prepared.unsupported_primitives += 1;
             }
@@ -189,7 +219,7 @@ fn build_scene(items: Vec<super::SceneItem>) -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Layer, Scene, TextStyle};
+    use crate::render::{Layer, Scene, SurfaceKind, SurfaceSlotId, TextStyle};
 
     const RED: Color = Color::rgb(255, 0, 0);
     const GREEN: Color = Color::rgb(0, 255, 0);
@@ -386,5 +416,55 @@ mod tests {
         assert_eq!(prepared.rendered_primitives, 0);
         assert_eq!(prepared.unsupported_primitives, 2);
         assert!(prepared.rect_vertices.is_empty());
+    }
+
+    #[test]
+    fn surface_slot_fill_fallback_lowers_to_rect_vertices() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(10.0, 10.0, 20.0, 20.0),
+            SurfaceKind::Canvas,
+            SurfaceFallback::FillRect { color: RED },
+        );
+        let prepared = prepare_frame(&frame(scene));
+
+        assert_eq!(prepared.rendered_primitives, 1);
+        assert_eq!(prepared.unsupported_primitives, 0);
+        assert_eq!(prepared.rect_vertices.len(), 6);
+    }
+
+    #[test]
+    fn surface_slot_none_fallback_is_unsupported() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(10.0, 10.0, 20.0, 20.0),
+            SurfaceKind::Browser,
+            SurfaceFallback::None,
+        );
+        let prepared = prepare_frame(&frame(scene));
+
+        assert_eq!(prepared.rendered_primitives, 0);
+        assert_eq!(prepared.unsupported_primitives, 1);
+    }
+
+    #[test]
+    fn surface_slot_text_fallback_is_unsupported_in_prepared_gpu_draws() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(10.0, 10.0, 20.0, 20.0),
+            SurfaceKind::Terminal,
+            SurfaceFallback::Text {
+                position: Point::new(12.0, 14.0),
+                text: "slot".to_string(),
+                style: TextStyle::new(RED, 12.0),
+            },
+        );
+        let prepared = prepare_frame(&frame(scene));
+
+        assert_eq!(prepared.rendered_primitives, 0);
+        assert_eq!(prepared.unsupported_primitives, 1);
     }
 }

@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::render::{Frame, Layer, Point, Rect};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -439,6 +442,69 @@ pub type PointerDispatchResult = DispatchResult<HitRegionId>;
 pub type KeyboardDispatchResult = DispatchResult<FocusId>;
 pub type InputDispatchResult = DispatchResult<DispatchTarget>;
 
+pub struct PointerDispatchContext<'a> {
+    pub plan: &'a PointerDispatchPlan,
+}
+
+pub struct KeyboardDispatchContext<'a> {
+    pub plan: &'a KeyboardDispatchPlan,
+}
+
+pub type PointerHandler =
+    Arc<dyn Fn(&PointerDispatchContext<'_>) -> PointerDispatchResult + Send + Sync + 'static>;
+pub type KeyboardHandler =
+    Arc<dyn Fn(&KeyboardDispatchContext<'_>) -> KeyboardDispatchResult + Send + Sync + 'static>;
+
+#[derive(Default)]
+pub struct PointerListenerRegistry {
+    handlers: HashMap<HitRegionId, Vec<PointerHandler>>,
+}
+
+impl PointerListenerRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, target: HitRegionId, handler: PointerHandler) {
+        self.handlers.entry(target).or_default().push(handler);
+    }
+
+    pub fn handlers_for(&self, target: HitRegionId) -> Option<&[PointerHandler]> {
+        self.handlers.get(&target).map(Vec::as_slice)
+    }
+}
+
+#[derive(Default)]
+pub struct KeyboardListenerRegistry {
+    handlers: HashMap<FocusId, Vec<KeyboardHandler>>,
+}
+
+impl KeyboardListenerRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, target: FocusId, handler: KeyboardHandler) {
+        self.handlers.entry(target).or_default().push(handler);
+    }
+
+    pub fn handlers_for(&self, target: FocusId) -> Option<&[KeyboardHandler]> {
+        self.handlers.get(&target).map(Vec::as_slice)
+    }
+}
+
+#[derive(Default)]
+pub struct InputListenerRegistry {
+    pub pointer: PointerListenerRegistry,
+    pub keyboard: KeyboardListenerRegistry,
+}
+
+impl InputListenerRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyboardDispatchKind {
     KeyDown,
@@ -624,6 +690,94 @@ impl From<KeyboardDispatchResult> for InputDispatchResult {
             default_prevented: value.default_prevented,
             consumer: value.consumer.map(DispatchTarget::FocusRegion),
         }
+    }
+}
+
+pub fn dispatch_pointer_plan(
+    registry: &PointerListenerRegistry,
+    plan: &PointerDispatchPlan,
+) -> PointerDispatchResult {
+    let context = PointerDispatchContext { plan };
+    let mut result = PointerDispatchResult::ignored();
+
+    for target in &plan.capture_path {
+        let Some(handlers) = registry.handlers_for(*target) else {
+            continue;
+        };
+
+        for handler in handlers {
+            result = merge_pointer_results(result, handler(&context));
+            if result.propagation_stopped {
+                return result;
+            }
+        }
+    }
+
+    result
+}
+
+pub fn dispatch_keyboard_plan(
+    registry: &KeyboardListenerRegistry,
+    plan: &KeyboardDispatchPlan,
+) -> KeyboardDispatchResult {
+    if !plan.is_dispatchable() {
+        return KeyboardDispatchResult::ignored();
+    }
+
+    let Some(target) = plan.target else {
+        return KeyboardDispatchResult::ignored();
+    };
+    let Some(handlers) = registry.handlers_for(target) else {
+        return KeyboardDispatchResult::ignored();
+    };
+
+    let context = KeyboardDispatchContext { plan };
+    let mut result = KeyboardDispatchResult::ignored();
+    for handler in handlers {
+        result = merge_keyboard_results(result, handler(&context));
+        if result.propagation_stopped {
+            return result;
+        }
+    }
+
+    result
+}
+
+pub fn dispatch_pointer(
+    registry: &InputListenerRegistry,
+    plan: &PointerDispatchPlan,
+) -> PointerDispatchResult {
+    dispatch_pointer_plan(&registry.pointer, plan)
+}
+
+pub fn dispatch_keyboard(
+    registry: &InputListenerRegistry,
+    plan: &KeyboardDispatchPlan,
+) -> KeyboardDispatchResult {
+    dispatch_keyboard_plan(&registry.keyboard, plan)
+}
+
+fn merge_pointer_results(
+    current: PointerDispatchResult,
+    next: PointerDispatchResult,
+) -> PointerDispatchResult {
+    PointerDispatchResult {
+        handled: current.handled || next.handled,
+        propagation_stopped: current.propagation_stopped || next.propagation_stopped,
+        default_prevented: current.default_prevented || next.default_prevented,
+        consumer: current.consumer.or(next.consumer),
+    }
+}
+
+fn merge_keyboard_results(
+    current: KeyboardDispatchResult,
+    next: KeyboardDispatchResult,
+) -> KeyboardDispatchResult {
+    KeyboardDispatchResult {
+        handled: current.handled || next.handled,
+        propagation_stopped: current.propagation_stopped || next.propagation_stopped,
+        default_prevented: current.default_prevented || next.default_prevented,
+        consumer: current.consumer.or(next.consumer),
     }
 }
 
@@ -1028,6 +1182,199 @@ mod tests {
         assert!(pointer_result.handled);
         assert_eq!(keyboard_result.consumer, Some(BACK_FOCUS));
         assert!(keyboard_result.handled);
+    }
+
+    #[test]
+    fn pointer_listener_registry_stores_handlers_by_region() {
+        let mut registry = PointerListenerRegistry::new();
+        registry.register(BACK, Arc::new(|_| PointerDispatchResult::handled_by(BACK)));
+
+        let handlers = registry.handlers_for(BACK).unwrap();
+        assert_eq!(handlers.len(), 1);
+        assert!(registry.handlers_for(FRONT).is_none());
+    }
+
+    #[test]
+    fn keyboard_listener_registry_stores_handlers_by_focus() {
+        let mut registry = KeyboardListenerRegistry::new();
+        registry.register(
+            BACK_FOCUS,
+            Arc::new(|_| KeyboardDispatchResult::handled_by(BACK_FOCUS)),
+        );
+
+        let handlers = registry.handlers_for(BACK_FOCUS).unwrap();
+        assert_eq!(handlers.len(), 1);
+        assert!(registry.handlers_for(FRONT_FOCUS).is_none());
+    }
+
+    #[test]
+    fn dispatch_pointer_plan_invokes_handlers_in_capture_order() {
+        let frame = frame_with_regions(vec![
+            HitRegion::new(BACK, Rect::from_xywh(0.0, 0.0, 10.0, 10.0)),
+            HitRegion::new(FRONT, Rect::from_xywh(0.0, 0.0, 10.0, 10.0)),
+        ]);
+        let mut state = PointerState::new();
+        let transition = state.process(
+            &frame,
+            pointer_event(PointerEventKind::Move, Point::new(1.0, 1.0)),
+        );
+        let plan = plan_pointer_dispatch(&frame, &transition);
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut registry = PointerListenerRegistry::new();
+        registry.register(
+            BACK,
+            Arc::new({
+                let events = events.clone();
+                move |_| {
+                    events.lock().unwrap().push(BACK);
+                    PointerDispatchResult::ignored()
+                }
+            }),
+        );
+        registry.register(
+            FRONT,
+            Arc::new({
+                let events = events.clone();
+                move |_| {
+                    events.lock().unwrap().push(FRONT);
+                    PointerDispatchResult::ignored()
+                }
+            }),
+        );
+
+        dispatch_pointer_plan(&registry, &plan);
+
+        assert_eq!(&*events.lock().unwrap(), &[BACK, FRONT]);
+    }
+
+    #[test]
+    fn dispatch_pointer_plan_stops_when_propagation_stops() {
+        let frame = frame_with_regions(vec![
+            HitRegion::new(BACK, Rect::from_xywh(0.0, 0.0, 10.0, 10.0)),
+            HitRegion::new(FRONT, Rect::from_xywh(0.0, 0.0, 10.0, 10.0)),
+        ]);
+        let mut state = PointerState::new();
+        let transition = state.process(
+            &frame,
+            pointer_event(PointerEventKind::Move, Point::new(1.0, 1.0)),
+        );
+        let plan = plan_pointer_dispatch(&frame, &transition);
+        let mut registry = PointerListenerRegistry::new();
+        registry.register(
+            BACK,
+            Arc::new(|_| PointerDispatchResult::handled_by(BACK).stop_propagation()),
+        );
+        registry.register(
+            FRONT,
+            Arc::new(|_| PointerDispatchResult::handled_by(FRONT)),
+        );
+
+        let result = dispatch_pointer_plan(&registry, &plan);
+
+        assert!(result.handled);
+        assert!(result.propagation_stopped);
+        assert_eq!(result.consumer, Some(BACK));
+    }
+
+    #[test]
+    fn dispatch_pointer_plan_accumulates_default_prevented() {
+        let frame = frame_with_regions(vec![HitRegion::new(
+            BACK,
+            Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+        )]);
+        let mut state = PointerState::new();
+        let transition = state.process(
+            &frame,
+            pointer_event(PointerEventKind::Move, Point::new(1.0, 1.0)),
+        );
+        let plan = plan_pointer_dispatch(&frame, &transition);
+        let mut registry = PointerListenerRegistry::new();
+        registry.register(
+            BACK,
+            Arc::new(|_| PointerDispatchResult::handled_by(BACK).prevent_default()),
+        );
+
+        let result = dispatch_pointer_plan(&registry, &plan);
+
+        assert!(result.default_prevented);
+        assert_eq!(result.consumer, Some(BACK));
+    }
+
+    #[test]
+    fn dispatch_keyboard_plan_ignores_when_no_focus_target() {
+        let registry = KeyboardListenerRegistry::new();
+        let focus_state = FocusState::new();
+        let plan = plan_keyboard_dispatch(
+            &focus_state,
+            KeyboardEvent::ModifiersChanged(ModifiersChangedEvent {
+                modifiers: Modifiers::default(),
+            }),
+        );
+
+        let result = dispatch_keyboard_plan(&registry, &plan);
+
+        assert!(!result.handled);
+        assert_eq!(result.consumer, None);
+    }
+
+    #[test]
+    fn dispatch_keyboard_plan_invokes_focused_handlers() {
+        let mut registry = KeyboardListenerRegistry::new();
+        registry.register(
+            BACK_FOCUS,
+            Arc::new(|_| KeyboardDispatchResult::handled_by(BACK_FOCUS)),
+        );
+        let mut focus_state = FocusState::new();
+        focus_state.focus(BACK_FOCUS);
+        let plan = plan_keyboard_dispatch(
+            &focus_state,
+            KeyboardEvent::KeyDown(KeyDownEvent {
+                keystroke: Keystroke {
+                    key: Key::Character("a".to_string()),
+                    text: Some("a".to_string()),
+                    modifiers: Modifiers::default(),
+                    location: KeyLocation::Standard,
+                },
+                repeat: false,
+                prefer_text: false,
+            }),
+        );
+
+        let result = dispatch_keyboard_plan(&registry, &plan);
+
+        assert!(result.handled);
+        assert_eq!(result.consumer, Some(BACK_FOCUS));
+    }
+
+    #[test]
+    fn dispatch_keyboard_plan_stops_when_propagation_stops() {
+        let mut registry = KeyboardListenerRegistry::new();
+        registry.register(
+            BACK_FOCUS,
+            Arc::new(|_| KeyboardDispatchResult::handled_by(BACK_FOCUS).stop_propagation()),
+        );
+        registry.register(
+            BACK_FOCUS,
+            Arc::new(|_| KeyboardDispatchResult::handled_by(FRONT_FOCUS)),
+        );
+        let mut focus_state = FocusState::new();
+        focus_state.focus(BACK_FOCUS);
+        let plan = plan_keyboard_dispatch(
+            &focus_state,
+            KeyboardEvent::KeyUp(KeyUpEvent {
+                keystroke: Keystroke {
+                    key: Key::Named(NamedKey::Escape),
+                    text: None,
+                    modifiers: Modifiers::default(),
+                    location: KeyLocation::Standard,
+                },
+            }),
+        );
+
+        let result = dispatch_keyboard_plan(&registry, &plan);
+
+        assert!(result.propagation_stopped);
+        assert_eq!(result.consumer, Some(BACK_FOCUS));
     }
 
     #[test]

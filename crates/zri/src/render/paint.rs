@@ -1,6 +1,9 @@
 use crate::input::{FocusId, FocusRegion, HitBehavior, HitRegion, HitRegionId};
 
-use super::{Color, Layer, Point, Primitive, Rect, Scene, SceneItem, Stroke, TextStyle};
+use super::{
+    Color, Layer, Point, Primitive, Rect, Scene, SceneItem, Stroke, SurfaceFallback, SurfaceKind,
+    SurfaceSlotId, TextStyle,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct PaintContext {
@@ -50,6 +53,21 @@ impl PaintContext {
             position,
             text: text.into(),
             style,
+        });
+    }
+
+    pub fn surface_slot(
+        &mut self,
+        id: SurfaceSlotId,
+        rect: Rect,
+        kind: SurfaceKind,
+        fallback: SurfaceFallback,
+    ) {
+        self.push(Primitive::SurfaceSlot {
+            id,
+            rect,
+            kind,
+            fallback,
         });
     }
 
@@ -208,6 +226,70 @@ mod tests {
         );
         assert_eq!(frame.focus_regions[0].clip, None);
         assert_eq!(frame.focus_regions[0].layer, Layer(0));
+    }
+
+    #[test]
+    fn paint_context_records_surface_slot() {
+        let mut paint = PaintContext::new();
+        paint.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(1.0, 2.0, 3.0, 4.0),
+            SurfaceKind::Terminal,
+            SurfaceFallback::FillRect {
+                color: Color::WHITE,
+            },
+        );
+
+        let scene = paint.finish();
+        assert_eq!(scene.items().len(), 1);
+        assert_eq!(
+            scene.items()[0].primitive,
+            Primitive::SurfaceSlot {
+                id: SurfaceSlotId(1),
+                rect: Rect::from_xywh(1.0, 2.0, 3.0, 4.0),
+                kind: SurfaceKind::Terminal,
+                fallback: SurfaceFallback::FillRect {
+                    color: Color::WHITE,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn paint_context_applies_clip_and_layer_to_surface_slot() {
+        let mut paint = PaintContext::new();
+        paint.with_layer(Layer(3), |paint| {
+            paint.with_clip(Rect::from_xywh(1.0, 2.0, 3.0, 4.0), |paint| {
+                paint.surface_slot(
+                    SurfaceSlotId(1),
+                    Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+                    SurfaceKind::Canvas,
+                    SurfaceFallback::None,
+                );
+            });
+        });
+
+        let scene = paint.finish();
+        assert_eq!(
+            scene.items()[0].clip,
+            Some(Rect::from_xywh(1.0, 2.0, 3.0, 4.0))
+        );
+        assert_eq!(scene.items()[0].layer, Layer(3));
+    }
+
+    #[test]
+    fn paint_context_skips_surface_slot_inside_empty_clip() {
+        let mut paint = PaintContext::new();
+        paint.with_clip(Rect::from_xywh(0.0, 0.0, 0.0, 1.0), |paint| {
+            paint.surface_slot(
+                SurfaceSlotId(1),
+                Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+                SurfaceKind::Custom,
+                SurfaceFallback::None,
+            );
+        });
+
+        assert!(paint.finish().items().is_empty());
     }
 
     #[test]

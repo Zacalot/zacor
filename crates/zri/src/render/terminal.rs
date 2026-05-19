@@ -1,6 +1,6 @@
 use super::{
     Color, Coord, Frame, Point, Primitive, Rect, RenderCapabilities, RenderError, RenderResult,
-    Renderer, Size,
+    Renderer, Size, SurfaceFallback,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -338,6 +338,36 @@ impl Renderer for TerminalRenderer {
                         result.rendered_primitives += 1;
                     }
                 }
+                Primitive::SurfaceSlot { rect, fallback, .. } => match fallback {
+                    SurfaceFallback::None => {
+                        result.unsupported_primitives += 1;
+                    }
+                    SurfaceFallback::FillRect { color } => {
+                        if self.fill_rect(frame.size, *rect, item.clip, *color) {
+                            result.rendered_primitives += 1;
+                        }
+                    }
+                    SurfaceFallback::StrokeRect { stroke } => {
+                        if self.stroke_rect(
+                            frame.size,
+                            *rect,
+                            item.clip,
+                            stroke.color,
+                            stroke.width,
+                        ) {
+                            result.rendered_primitives += 1;
+                        }
+                    }
+                    SurfaceFallback::Text {
+                        position,
+                        text,
+                        style,
+                    } => {
+                        if self.text(frame.size, *position, text, item.clip, style.color) {
+                            result.rendered_primitives += 1;
+                        }
+                    }
+                },
             }
         }
 
@@ -385,7 +415,7 @@ impl TerminalRect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Layer, Scene, SceneItem, Stroke, TextStyle};
+    use crate::render::{Layer, Scene, SceneItem, Stroke, SurfaceKind, SurfaceSlotId, TextStyle};
 
     const RED: Color = Color::rgb(255, 0, 0);
     const BLUE: Color = Color::rgb(0, 0, 255);
@@ -689,5 +719,54 @@ mod tests {
             renderer.render(&frame).unwrap_err().message(),
             "frame dimensions must be positive"
         );
+    }
+
+    #[test]
+    fn surface_slot_fill_fallback_projects_to_terminal_cells() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(0.0, 0.0, 1.0, 1.0),
+            SurfaceKind::Canvas,
+            SurfaceFallback::FillRect { color: BLUE },
+        );
+        let renderer = render_scene(scene, 2, 2);
+
+        assert_eq!(cell(&renderer, 0, 0).bg, BLUE);
+    }
+
+    #[test]
+    fn surface_slot_text_fallback_renders_text() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(0.0, 0.0, 2.0, 1.0),
+            SurfaceKind::Terminal,
+            SurfaceFallback::Text {
+                position: Point::new(0.0, 0.0),
+                text: "x".to_string(),
+                style: TextStyle::new(WHITE, 12.0),
+            },
+        );
+        let renderer = render_scene(scene, 2, 2);
+
+        assert_eq!(cell(&renderer, 0, 0).ch, 'x');
+    }
+
+    #[test]
+    fn surface_slot_none_fallback_is_unsupported() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(0.0, 0.0, 1.0, 1.0),
+            SurfaceKind::Browser,
+            SurfaceFallback::None,
+        );
+        let mut renderer = TerminalRenderer::new(2, 2);
+        let result = renderer
+            .render(&Frame::new(Size::new(2.0, 2.0), scene))
+            .unwrap();
+
+        assert_eq!(result.unsupported_primitives, 1);
     }
 }

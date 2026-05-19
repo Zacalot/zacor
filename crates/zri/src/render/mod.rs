@@ -16,7 +16,9 @@ pub use paint::PaintContext;
 pub use prepared::{PreparedFrame, PreparedRectVertex, prepare_frame};
 pub use raster::{RasterImage, RasterRenderer};
 pub use renderer::{RenderCapabilities, RenderError, RenderResult, Renderer};
-pub use scene::{Frame, Layer, Primitive, Scene, SceneItem};
+pub use scene::{
+    Frame, Layer, Primitive, Scene, SceneItem, SurfaceFallback, SurfaceKind, SurfaceSlotId,
+};
 pub use style::{Stroke, TextStyle};
 pub use terminal::{TerminalCell, TerminalGrid, TerminalRenderer};
 pub use test_renderer::TestRenderer;

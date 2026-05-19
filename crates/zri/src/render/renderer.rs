@@ -34,6 +34,7 @@ impl RenderCapabilities {
             Primitive::StrokeRect { .. } => self.strokes,
             Primitive::Line { .. } => self.lines,
             Primitive::Text { .. } => self.text,
+            Primitive::SurfaceSlot { .. } => false,
         }
     }
 }

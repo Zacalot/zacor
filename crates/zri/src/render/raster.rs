@@ -1,6 +1,6 @@
 use super::{
     Color, Coord, Frame, Point, Primitive, Rect, RenderCapabilities, RenderError, RenderResult,
-    Renderer,
+    Renderer, SurfaceFallback,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,6 +206,24 @@ impl Renderer for RasterRenderer {
                         result.rendered_primitives += 1;
                     }
                 }
+                Primitive::SurfaceSlot { rect, fallback, .. } => match fallback {
+                    SurfaceFallback::None => {
+                        result.unsupported_primitives += 1;
+                    }
+                    SurfaceFallback::FillRect { color } => {
+                        if self.fill_rect(*rect, item.clip, *color) {
+                            result.rendered_primitives += 1;
+                        }
+                    }
+                    SurfaceFallback::StrokeRect { stroke } => {
+                        if self.stroke_rect(*rect, item.clip, stroke.color) {
+                            result.rendered_primitives += 1;
+                        }
+                    }
+                    SurfaceFallback::Text { .. } => {
+                        result.unsupported_primitives += 1;
+                    }
+                },
                 Primitive::Text { .. } => {
                     result.unsupported_primitives += 1;
                 }
@@ -219,7 +237,9 @@ impl Renderer for RasterRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Layer, Scene, SceneItem, Size, Stroke, TextStyle};
+    use crate::render::{
+        Layer, Scene, SceneItem, Size, Stroke, SurfaceKind, SurfaceSlotId, TextStyle,
+    };
 
     const RED: Color = Color::rgb(255, 0, 0);
     const BLUE: Color = Color::rgb(0, 0, 255);
@@ -350,6 +370,44 @@ mod tests {
         assert_eq!(
             renderer
                 .render(&Frame::new(Size::new(10.0, 10.0), scene))
+                .unwrap(),
+            RenderResult {
+                rendered_primitives: 0,
+                unsupported_primitives: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn surface_slot_fill_fallback_renders_pixels() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(1.0, 1.0, 2.0, 2.0),
+            SurfaceKind::Canvas,
+            SurfaceFallback::FillRect {
+                color: Color::WHITE,
+            },
+        );
+        let renderer = render_scene(scene, 4, 4);
+
+        assert_eq!(renderer.image().pixel(1, 1), Some(Color::WHITE));
+    }
+
+    #[test]
+    fn surface_slot_none_fallback_is_unsupported() {
+        let mut scene = Scene::new();
+        scene.surface_slot(
+            SurfaceSlotId(1),
+            Rect::from_xywh(1.0, 1.0, 2.0, 2.0),
+            SurfaceKind::Browser,
+            SurfaceFallback::None,
+        );
+        let mut renderer = RasterRenderer::new(4, 4);
+
+        assert_eq!(
+            renderer
+                .render(&Frame::new(Size::new(4.0, 4.0), scene))
                 .unwrap(),
             RenderResult {
                 rendered_primitives: 0,

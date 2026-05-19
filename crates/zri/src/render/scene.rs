@@ -2,6 +2,35 @@ use crate::input::{FocusRegion, HitRegion};
 
 use super::{Color, Point, Rect, Size, Stroke, TextStyle};
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SurfaceSlotId(pub u64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SurfaceKind {
+    Terminal,
+    Browser,
+    Canvas,
+    Image,
+    Media,
+    Custom,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SurfaceFallback {
+    None,
+    FillRect {
+        color: Color,
+    },
+    StrokeRect {
+        stroke: Stroke,
+    },
+    Text {
+        position: Point,
+        text: String,
+        style: TextStyle,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Primitive {
     Clear {
@@ -24,6 +53,12 @@ pub enum Primitive {
         position: Point,
         text: String,
         style: TextStyle,
+    },
+    SurfaceSlot {
+        id: SurfaceSlotId,
+        rect: Rect,
+        kind: SurfaceKind,
+        fallback: SurfaceFallback,
     },
 }
 
@@ -110,6 +145,21 @@ impl Scene {
             position,
             text: text.into(),
             style,
+        });
+    }
+
+    pub fn surface_slot(
+        &mut self,
+        id: SurfaceSlotId,
+        rect: Rect,
+        kind: SurfaceKind,
+        fallback: SurfaceFallback,
+    ) {
+        self.push(Primitive::SurfaceSlot {
+            id,
+            rect,
+            kind,
+            fallback,
         });
     }
 }
@@ -213,6 +263,40 @@ mod tests {
     }
 
     #[test]
+    fn surface_slot_preserves_requested_metadata() {
+        let mut scene = Scene::new();
+        let style = TextStyle::new(Color::WHITE, 12.0);
+        scene.surface_slot(
+            SurfaceSlotId(7),
+            Rect::from_xywh(1.0, 2.0, 3.0, 4.0),
+            SurfaceKind::Browser,
+            SurfaceFallback::Text {
+                position: Point::new(2.0, 3.0),
+                text: "fallback".to_string(),
+                style,
+            },
+        );
+
+        assert_eq!(
+            scene.items(),
+            &[SceneItem {
+                primitive: Primitive::SurfaceSlot {
+                    id: SurfaceSlotId(7),
+                    rect: Rect::from_xywh(1.0, 2.0, 3.0, 4.0),
+                    kind: SurfaceKind::Browser,
+                    fallback: SurfaceFallback::Text {
+                        position: Point::new(2.0, 3.0),
+                        text: "fallback".to_string(),
+                        style,
+                    },
+                },
+                clip: None,
+                layer: Layer(0),
+            }]
+        );
+    }
+
+    #[test]
     fn scene_items_can_carry_clip_and_layer_metadata() {
         let item = SceneItem::new(Primitive::FillRect {
             rect: Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
@@ -259,6 +343,23 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(colors, vec![Color::WHITE, Color::BLACK, Color::Transparent]);
+    }
+
+    #[test]
+    fn surface_slot_item_can_carry_clip_and_layer_metadata() {
+        let item = SceneItem::new(Primitive::SurfaceSlot {
+            id: SurfaceSlotId(1),
+            rect: Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+            kind: SurfaceKind::Canvas,
+            fallback: SurfaceFallback::None,
+        })
+        .clipped(Rect::from_xywh(1.0, 1.0, 2.0, 2.0))
+        .layered(Layer(2));
+
+        let mut scene = Scene::new();
+        scene.push_item(item.clone());
+
+        assert_eq!(scene.items(), &[item]);
     }
 
     #[test]

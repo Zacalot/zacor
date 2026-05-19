@@ -10,11 +10,11 @@ use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{Window, WindowAttributes, WindowId};
 use zri::input::{
     FocusId, FocusState, HitBehavior, HitRegionId, Key, KeyDownEvent, KeyLocation, KeyUpEvent,
-    KeyboardDispatchPlan, KeyboardDispatchResult, KeyboardEvent, KeyboardPropagation, Keystroke,
-    ModifierKey, Modifiers, ModifiersChangedEvent, NamedKey, PointerButton, PointerDispatchPlan,
-    PointerDispatchResult, PointerEvent, PointerEventKind, PointerState, PointerTransition,
-    keyboard_dispatch_result, plan_keyboard_dispatch, plan_pointer_dispatch,
-    pointer_dispatch_result,
+    KeyboardDispatchPlan, KeyboardDispatchResult, KeyboardEvent, KeyboardListenerRegistry,
+    Keystroke, ModifierKey, Modifiers, ModifiersChangedEvent, NamedKey, PointerButton,
+    PointerDispatchPlan, PointerDispatchResult, PointerEvent, PointerEventKind,
+    PointerListenerRegistry, PointerState, PointerTransition, dispatch_keyboard_plan,
+    dispatch_pointer_plan, plan_keyboard_dispatch, plan_pointer_dispatch,
 };
 use zri::render::{
     Color, Frame, Layer, PaintContext, Point, Rect, RenderError, Size, Stroke, WgpuRenderer,
@@ -37,6 +37,8 @@ fn main() {
 struct DemoApp {
     renderer: Option<WgpuRenderer>,
     native_window: Option<NativeWindow>,
+    pointer_listeners: PointerListenerRegistry,
+    keyboard_listeners: KeyboardListenerRegistry,
     pointer_state: PointerState,
     focus_state: FocusState,
     pointer_position: Point,
@@ -374,6 +376,7 @@ impl DemoApp {
 
         self.renderer = Some(renderer);
         self.native_window = Some(NativeWindow { window, target });
+        self.register_demo_listeners();
 
         if let Some(native_window) = self.native_window.as_ref() {
             native_window.window.request_redraw();
@@ -389,37 +392,45 @@ impl DemoApp {
             let focus_transition = self.focus_state.focus(focus_request);
             println!("focus transition: {:?}", focus_transition);
         }
-        let result = simulate_pointer_dispatch_result(&plan);
+        let result = dispatch_pointer_plan(&self.pointer_listeners, &plan);
         log_pointer_dispatch_result(&result);
     }
 
     fn log_keyboard_dispatch(&self, event: &KeyboardEvent) {
         let plan = plan_keyboard_dispatch(&self.focus_state, event.clone());
         log_keyboard_dispatch_plan(&plan);
-        let result = simulate_keyboard_dispatch_result(&plan);
+        let result = dispatch_keyboard_plan(&self.keyboard_listeners, &plan);
         log_keyboard_dispatch_result(&result);
     }
-}
 
-fn simulate_pointer_dispatch_result(plan: &PointerDispatchPlan) -> PointerDispatchResult {
-    let mut result = pointer_dispatch_result(plan, plan.target);
-    if matches!(plan.event_kind, PointerEventKind::Down) && result.handled {
-        result = result.prevent_default();
-    }
-    if plan.captured.is_some() {
-        result = result.stop_propagation();
-    }
-    result
-}
+    fn register_demo_listeners(&mut self) {
+        self.pointer_listeners.register(
+            BLUE_RECT_HIT,
+            Arc::new(|_| PointerDispatchResult::handled_by(BLUE_RECT_HIT)),
+        );
+        self.pointer_listeners.register(
+            WHITE_RECT_HIT,
+            Arc::new(|_| PointerDispatchResult::handled_by(WHITE_RECT_HIT).prevent_default()),
+        );
+        self.pointer_listeners.register(
+            STROKE_RECT_HIT,
+            Arc::new(|_| PointerDispatchResult::handled_by(STROKE_RECT_HIT).stop_propagation()),
+        );
 
-fn simulate_keyboard_dispatch_result(plan: &KeyboardDispatchPlan) -> KeyboardDispatchResult {
-    if plan.propagation == KeyboardPropagation::None {
-        return keyboard_dispatch_result(plan, None);
-    }
-
-    match plan.target {
-        Some(target) => keyboard_dispatch_result(plan, Some(target)).stop_propagation(),
-        None => keyboard_dispatch_result(plan, None),
+        self.keyboard_listeners.register(
+            BLUE_RECT_FOCUS,
+            Arc::new(|_| KeyboardDispatchResult::handled_by(BLUE_RECT_FOCUS).stop_propagation()),
+        );
+        self.keyboard_listeners.register(
+            WHITE_RECT_FOCUS,
+            Arc::new(|context| {
+                let mut result = KeyboardDispatchResult::handled_by(WHITE_RECT_FOCUS);
+                if context.plan.is_key_down() {
+                    result = result.prevent_default();
+                }
+                result.stop_propagation()
+            }),
+        );
     }
 }
 
@@ -458,6 +469,7 @@ fn top_hit(frame: &Frame, point: Point) -> Option<HitRegionId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zri::input::KeyboardPropagation;
 
     #[test]
     fn demo_frame_contains_supported_wgpu_primitives_only() {
@@ -600,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_pointer_dispatch_result_handles_targets() {
+    fn registry_backed_pointer_dispatch_handles_targets() {
         let frame = demo_frame(PhysicalSize::new(800, 600));
         let mut state = PointerState::new();
         let transition = state.process(
@@ -613,7 +625,12 @@ mod tests {
             },
         );
         let plan = plan_pointer_dispatch(&frame, &transition);
-        let result = simulate_pointer_dispatch_result(&plan);
+        let mut registry = PointerListenerRegistry::new();
+        registry.register(
+            BLUE_RECT_HIT,
+            Arc::new(|_| PointerDispatchResult::handled_by(BLUE_RECT_HIT).prevent_default()),
+        );
+        let result = dispatch_pointer_plan(&registry, &plan);
 
         assert!(result.handled);
         assert!(result.default_prevented);
@@ -621,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_keyboard_dispatch_result_uses_focus_target() {
+    fn registry_backed_keyboard_dispatch_uses_focus_target() {
         let mut focus_state = FocusState::new();
         focus_state.focus(BLUE_RECT_FOCUS);
         let plan = plan_keyboard_dispatch(
@@ -637,7 +654,12 @@ mod tests {
                 prefer_text: false,
             }),
         );
-        let result = simulate_keyboard_dispatch_result(&plan);
+        let mut registry = KeyboardListenerRegistry::new();
+        registry.register(
+            BLUE_RECT_FOCUS,
+            Arc::new(|_| KeyboardDispatchResult::handled_by(BLUE_RECT_FOCUS).stop_propagation()),
+        );
+        let result = dispatch_keyboard_plan(&registry, &plan);
 
         assert!(result.handled);
         assert!(result.propagation_stopped);
@@ -646,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_keyboard_dispatch_result_ignores_untargeted_plan() {
+    fn registry_backed_keyboard_dispatch_ignores_untargeted_plan() {
         let focus_state = FocusState::new();
         let plan = plan_keyboard_dispatch(
             &focus_state,
@@ -654,7 +676,8 @@ mod tests {
                 modifiers: Modifiers::default(),
             }),
         );
-        let result = simulate_keyboard_dispatch_result(&plan);
+        let registry = KeyboardListenerRegistry::new();
+        let result = dispatch_keyboard_plan(&registry, &plan);
 
         assert!(!result.handled);
         assert_eq!(result.consumer, None);
