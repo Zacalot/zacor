@@ -38,7 +38,7 @@ impl Renderer for TestRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Color, Rect, Scene, Size};
+    use crate::render::{Color, Layer, Primitive, Rect, Scene, SceneItem, Size};
 
     #[test]
     fn records_submitted_frames_exactly() {
@@ -73,5 +73,24 @@ mod tests {
                 unsupported_primitives: 1,
             }
         );
+    }
+
+    #[test]
+    fn preserves_clip_and_layer_metadata_in_recorded_frames() {
+        let mut scene = Scene::new();
+        scene.push_item(
+            SceneItem::new(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 2.0, 2.0),
+                color: Color::WHITE,
+            })
+            .clipped(Rect::from_xywh(1.0, 1.0, 1.0, 1.0))
+            .layered(Layer(4)),
+        );
+        let frame = Frame::new(Size::new(2.0, 2.0), scene);
+
+        let mut renderer = TestRenderer::with_all_capabilities();
+        renderer.render(&frame).unwrap();
+
+        assert_eq!(renderer.frames()[0], frame);
     }
 }

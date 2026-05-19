@@ -654,7 +654,7 @@ fn wgpu_color(color: Color) -> wgpu::Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Rect, Scene, Stroke};
+    use crate::render::{Layer, PaintContext, Primitive, Rect, Scene, SceneItem, Stroke};
 
     #[test]
     fn converts_prepared_vertex_to_wgpu_vertex() {
@@ -845,6 +845,30 @@ mod tests {
 
     #[test]
     #[ignore]
+    fn reads_back_item_clip_pixels() {
+        let mut renderer = WgpuRenderer::new().unwrap();
+        let target = WgpuTarget::new(&renderer, Size::new(8.0, 8.0));
+        let mut scene = Scene::new();
+        scene.clear_color(Color::BLACK);
+        scene.push_item(
+            SceneItem::new(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 6.0, 6.0),
+                color: Color::WHITE,
+            })
+            .clipped(Rect::from_xywh(2.0, 2.0, 2.0, 2.0)),
+        );
+        let frame = Frame::new(Size::new(8.0, 8.0), scene);
+
+        renderer.render_to_target(&target, &frame).unwrap();
+        let image = renderer.read_target(&target).unwrap();
+
+        assert_eq!(image.pixel(1, 1), Some(Rgba8Pixel::new(0, 0, 0, 255)));
+        assert_eq!(image.pixel(2, 2), Some(Rgba8Pixel::new(255, 255, 255, 255)));
+        assert_eq!(image.pixel(4, 4), Some(Rgba8Pixel::new(0, 0, 0, 255)));
+    }
+
+    #[test]
+    #[ignore]
     fn reads_back_stroke_rect_pixels() {
         let mut renderer = WgpuRenderer::new().unwrap();
         let target = WgpuTarget::new(&renderer, Size::new(12.0, 12.0));
@@ -861,5 +885,57 @@ mod tests {
 
         assert_eq!(image.pixel(3, 3), Some(Rgba8Pixel::new(255, 0, 0, 255)));
         assert_eq!(image.pixel(5, 5), Some(Rgba8Pixel::new(0, 0, 0, 255)));
+    }
+
+    #[test]
+    #[ignore]
+    fn reads_back_layered_overlap_pixels() {
+        let mut renderer = WgpuRenderer::new().unwrap();
+        let target = WgpuTarget::new(&renderer, Size::new(10.0, 10.0));
+        let mut scene = Scene::new();
+        scene.clear_color(Color::BLACK);
+        scene.push_item(
+            SceneItem::new(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 8.0, 8.0),
+                color: Color::rgb(0, 0, 255),
+            })
+            .layered(Layer(0)),
+        );
+        scene.push_item(
+            SceneItem::new(Primitive::FillRect {
+                rect: Rect::from_xywh(2.0, 2.0, 6.0, 6.0),
+                color: Color::rgb(0, 255, 0),
+            })
+            .layered(Layer(5)),
+        );
+        let frame = Frame::new(Size::new(10.0, 10.0), scene);
+
+        renderer.render_to_target(&target, &frame).unwrap();
+        let image = renderer.read_target(&target).unwrap();
+
+        assert_eq!(image.pixel(1, 1), Some(Rgba8Pixel::new(0, 0, 255, 255)));
+        assert_eq!(image.pixel(3, 3), Some(Rgba8Pixel::new(0, 255, 0, 255)));
+    }
+
+    #[test]
+    #[ignore]
+    fn reads_back_nested_paint_context_clip_pixels() {
+        let mut renderer = WgpuRenderer::new().unwrap();
+        let target = WgpuTarget::new(&renderer, Size::new(10.0, 10.0));
+        let mut paint = PaintContext::new();
+        paint.clear_color(Color::BLACK);
+        paint.with_clip(Rect::from_xywh(1.0, 1.0, 6.0, 6.0), |paint| {
+            paint.with_clip(Rect::from_xywh(3.0, 3.0, 4.0, 4.0), |paint| {
+                paint.fill_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), Color::WHITE);
+            });
+        });
+        let frame = Frame::new(Size::new(10.0, 10.0), paint.finish());
+
+        renderer.render_to_target(&target, &frame).unwrap();
+        let image = renderer.read_target(&target).unwrap();
+
+        assert_eq!(image.pixel(2, 2), Some(Rgba8Pixel::new(0, 0, 0, 255)));
+        assert_eq!(image.pixel(3, 3), Some(Rgba8Pixel::new(255, 255, 255, 255)));
+        assert_eq!(image.pixel(7, 7), Some(Rgba8Pixel::new(0, 0, 0, 255)));
     }
 }

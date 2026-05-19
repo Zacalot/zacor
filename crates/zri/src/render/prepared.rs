@@ -24,19 +24,35 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
         unsupported_primitives: 0,
     };
 
-    for primitive in frame.scene.primitives() {
-        match primitive {
-            Primitive::Clear { color } => {
-                prepared.clear_color = Some(*color);
-                prepared.rendered_primitives += 1;
-            }
+    for item in frame.scene.items() {
+        if let Primitive::Clear { color } = &item.primitive {
+            prepared.clear_color = Some(*color);
+            prepared.rendered_primitives += 1;
+        }
+    }
+
+    for item in frame.scene.items_in_paint_order() {
+        match &item.primitive {
+            Primitive::Clear { .. } => {}
             Primitive::FillRect { rect, color } => {
-                if push_fill_rect(&mut prepared.rect_vertices, frame.size, *rect, *color) {
+                if push_fill_rect(
+                    &mut prepared.rect_vertices,
+                    frame.size,
+                    *rect,
+                    item.clip,
+                    *color,
+                ) {
                     prepared.rendered_primitives += 1;
                 }
             }
             Primitive::StrokeRect { rect, stroke } => {
-                if push_stroke_rect(&mut prepared.rect_vertices, frame.size, *rect, *stroke) {
+                if push_stroke_rect(
+                    &mut prepared.rect_vertices,
+                    frame.size,
+                    *rect,
+                    item.clip,
+                    *stroke,
+                ) {
                     prepared.rendered_primitives += 1;
                 }
             }
@@ -49,10 +65,19 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
     prepared
 }
 
+fn effective_clip(frame_size: Size, clip: Option<Rect>) -> Rect {
+    let frame_rect = Rect::from_xywh(0.0, 0.0, frame_size.width, frame_size.height);
+    match clip {
+        Some(clip) => clip.intersect(&frame_rect),
+        None => frame_rect,
+    }
+}
+
 fn push_stroke_rect(
     vertices: &mut Vec<PreparedRectVertex>,
     frame_size: Size,
     rect: Rect,
+    clip: Option<Rect>,
     stroke: Stroke,
 ) -> bool {
     if rect.is_empty() || stroke.width <= 0.0 {
@@ -81,10 +106,10 @@ fn push_stroke_rect(
     );
 
     let before = vertices.len();
-    push_fill_rect(vertices, frame_size, top_rect, stroke.color);
-    push_fill_rect(vertices, frame_size, bottom_rect, stroke.color);
-    push_fill_rect(vertices, frame_size, left_rect, stroke.color);
-    push_fill_rect(vertices, frame_size, right_rect, stroke.color);
+    push_fill_rect(vertices, frame_size, top_rect, clip, stroke.color);
+    push_fill_rect(vertices, frame_size, bottom_rect, clip, stroke.color);
+    push_fill_rect(vertices, frame_size, left_rect, clip, stroke.color);
+    push_fill_rect(vertices, frame_size, right_rect, clip, stroke.color);
     vertices.len() > before
 }
 
@@ -92,10 +117,10 @@ fn push_fill_rect(
     vertices: &mut Vec<PreparedRectVertex>,
     frame_size: Size,
     rect: Rect,
+    clip: Option<Rect>,
     color: Color,
 ) -> bool {
-    let frame_rect = Rect::from_xywh(0.0, 0.0, frame_size.width, frame_size.height);
-    let rect = rect.intersect(&frame_rect);
+    let rect = rect.intersect(&effective_clip(frame_size, clip));
     if rect.is_empty() || frame_size.width <= 0.0 || frame_size.height <= 0.0 {
         return false;
     }
@@ -143,9 +168,28 @@ fn logical_to_ndc(point: Point, size: Size) -> [f32; 2] {
 }
 
 #[cfg(test)]
+fn item(primitive: Primitive) -> super::SceneItem {
+    super::SceneItem::new(primitive)
+}
+
+#[cfg(test)]
+fn fill_rect_color_at_index(prepared: &PreparedFrame, rect_index: usize) -> [f32; 4] {
+    prepared.rect_vertices[rect_index * 6].color
+}
+
+#[cfg(test)]
+fn build_scene(items: Vec<super::SceneItem>) -> Frame {
+    let mut scene = super::Scene::new();
+    for item in items {
+        scene.push_item(item);
+    }
+    Frame::new(Size::new(100.0, 100.0), scene)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Scene, TextStyle};
+    use crate::render::{Layer, Scene, TextStyle};
 
     const RED: Color = Color::rgb(255, 0, 0);
     const GREEN: Color = Color::rgb(0, 255, 0);
@@ -206,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn fill_rects_preserve_scene_order() {
+    fn fill_rects_preserve_same_layer_insertion_order() {
         let mut scene = Scene::new();
         scene.fill_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), RED);
         scene.fill_rect(Rect::from_xywh(10.0, 0.0, 10.0, 10.0), GREEN);
@@ -214,8 +258,29 @@ mod tests {
 
         assert_eq!(prepared.rendered_primitives, 2);
         assert_eq!(prepared.rect_vertices.len(), 12);
-        assert_eq!(prepared.rect_vertices[0].color, RED.to_f32_rgba());
-        assert_eq!(prepared.rect_vertices[6].color, GREEN.to_f32_rgba());
+        assert_eq!(fill_rect_color_at_index(&prepared, 0), RED.to_f32_rgba());
+        assert_eq!(fill_rect_color_at_index(&prepared, 1), GREEN.to_f32_rgba());
+    }
+
+    #[test]
+    fn layer_order_draws_lower_layers_first() {
+        let frame = build_scene(vec![
+            item(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+                color: RED,
+            })
+            .layered(Layer(10)),
+            item(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 10.0, 10.0),
+                color: GREEN,
+            })
+            .layered(Layer(0)),
+        ]);
+        let prepared = prepare_frame(&frame);
+
+        assert_eq!(prepared.rendered_primitives, 2);
+        assert_eq!(fill_rect_color_at_index(&prepared, 0), GREEN.to_f32_rgba());
+        assert_eq!(fill_rect_color_at_index(&prepared, 1), RED.to_f32_rgba());
     }
 
     #[test]
@@ -228,6 +293,38 @@ mod tests {
         assert_eq!(prepared.rect_vertices.len(), 6);
         assert_position_near(prepared.rect_vertices[0].position, [-1.0, 1.0]);
         assert_position_near(prepared.rect_vertices[2].position, [-0.6, 0.6]);
+    }
+
+    #[test]
+    fn item_clip_clips_fill_rect_vertices() {
+        let frame = build_scene(vec![
+            item(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 20.0, 20.0),
+                color: BLUE,
+            })
+            .clipped(Rect::from_xywh(5.0, 5.0, 5.0, 5.0)),
+        ]);
+        let prepared = prepare_frame(&frame);
+
+        assert_eq!(prepared.rendered_primitives, 1);
+        assert_eq!(prepared.rect_vertices.len(), 6);
+        assert_position_near(prepared.rect_vertices[0].position, [-0.9, 0.9]);
+        assert_position_near(prepared.rect_vertices[2].position, [-0.8, 0.8]);
+    }
+
+    #[test]
+    fn empty_item_clip_emits_no_vertices() {
+        let frame = build_scene(vec![
+            item(Primitive::FillRect {
+                rect: Rect::from_xywh(0.0, 0.0, 20.0, 20.0),
+                color: BLUE,
+            })
+            .clipped(Rect::from_xywh(5.0, 5.0, 0.0, 5.0)),
+        ]);
+        let prepared = prepare_frame(&frame);
+
+        assert_eq!(prepared.rendered_primitives, 0);
+        assert!(prepared.rect_vertices.is_empty());
     }
 
     #[test]
@@ -246,6 +343,21 @@ mod tests {
                 .iter()
                 .all(|vertex| vertex.color == RED.to_f32_rgba())
         );
+    }
+
+    #[test]
+    fn stroke_rect_clip_can_reduce_visible_edges() {
+        let frame = build_scene(vec![
+            item(Primitive::StrokeRect {
+                rect: Rect::from_xywh(10.0, 10.0, 20.0, 20.0),
+                stroke: Stroke::new(RED, 2.0),
+            })
+            .clipped(Rect::from_xywh(10.0, 10.0, 20.0, 2.0)),
+        ]);
+        let prepared = prepare_frame(&frame);
+
+        assert_eq!(prepared.rendered_primitives, 1);
+        assert_eq!(prepared.rect_vertices.len(), 6);
     }
 
     #[test]

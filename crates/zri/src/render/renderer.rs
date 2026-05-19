@@ -53,8 +53,8 @@ pub struct RenderResult {
 impl RenderResult {
     pub fn from_frame(frame: &Frame, capabilities: RenderCapabilities) -> Self {
         let mut result = Self::default();
-        for primitive in frame.scene.primitives() {
-            if capabilities.supports(primitive) {
+        for item in frame.scene.items() {
+            if capabilities.supports(&item.primitive) {
                 result.rendered_primitives += 1;
             } else {
                 result.unsupported_primitives += 1;
