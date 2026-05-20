@@ -1,7 +1,8 @@
 use super::{
-    Color, Frame, PreparedFrame, PreparedRectVertex, RenderCapabilities, RenderError, RenderResult,
-    Renderer, Size, prepare_frame,
+    Color, Frame, Point, PreparedDraw, PreparedFrame, PreparedRectVertex, PreparedTextRun,
+    RenderCapabilities, RenderError, RenderResult, Renderer, Size, prepare_frame_with_text,
 };
+use crate::text::{GlyphImageFormat, GlyphKey, TextSystem};
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -31,6 +32,40 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const TEXT_SHADER: &str = r#"
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) mode: f32,
+};
+
+@group(0) @binding(0) var text_atlas: texture_2d<f32>;
+@group(0) @binding(1) var text_sampler: sampler;
+
+@vertex
+fn vs_main(
+    @location(0) position: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) mode: f32,
+) -> VertexOut {
+    var out: VertexOut;
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.uv = uv;
+    out.color = color;
+    out.mode = mode;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let sampled = textureSample(text_atlas, text_sampler, in.uv);
+    let masked = vec4<f32>(in.color.rgb, in.color.a * sampled.a);
+    return masked * (1.0 - in.mode) + sampled * in.mode;
+}
+"#;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WgpuRendererConfig {
     pub format: wgpu::TextureFormat,
@@ -50,6 +85,9 @@ pub struct WgpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     rect_pipeline: wgpu::RenderPipeline,
+    text_pipeline: wgpu::RenderPipeline,
+    text_atlas: WgpuTextAtlas,
+    text_system: TextSystem,
     format: wgpu::TextureFormat,
 }
 
@@ -79,6 +117,10 @@ impl WgpuRenderer {
         .map_err(|error| RenderError::new(format!("failed to create wgpu device: {error}")))?;
 
         let rect_pipeline = create_rect_pipeline(&device, config.format);
+        let text_bind_group_layout = create_text_bind_group_layout(&device);
+        let text_sampler = create_text_sampler(&device);
+        let text_atlas = WgpuTextAtlas::new(&device, &text_bind_group_layout, &text_sampler);
+        let text_pipeline = create_text_pipeline(&device, config.format, &text_bind_group_layout);
 
         Ok(Self {
             instance,
@@ -86,6 +128,9 @@ impl WgpuRenderer {
             device,
             queue,
             rect_pipeline,
+            text_pipeline,
+            text_atlas,
+            text_system: TextSystem::new(),
             format: config.format,
         })
     }
@@ -101,14 +146,14 @@ impl WgpuRenderer {
             ));
         }
 
-        let prepared = prepare_frame(frame);
+        let prepared = prepare_frame_with_text(frame, &mut self.text_system);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("zri-offscreen-render"),
             });
 
-        self.encode_prepared_frame(&mut encoder, &target.view, &prepared);
+        self.encode_prepared_frame(&mut encoder, &target.view, &prepared)?;
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -295,7 +340,7 @@ impl WgpuRenderer {
             Err(wgpu::SurfaceError::Other) => return Ok(RenderResult::default()),
         };
 
-        let prepared = prepare_frame(frame);
+        let prepared = prepare_frame_with_text(frame, &mut self.text_system);
         let view = surface_frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -304,7 +349,7 @@ impl WgpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("zri-surface-render"),
             });
-        self.encode_prepared_frame(&mut encoder, &view, &prepared);
+        self.encode_prepared_frame(&mut encoder, &view, &prepared)?;
         self.queue.submit(std::iter::once(encoder.finish()));
         surface_frame.present();
 
@@ -315,13 +360,16 @@ impl WgpuRenderer {
     }
 
     fn encode_prepared_frame(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         prepared: &PreparedFrame,
-    ) {
+    ) -> Result<(), RenderError> {
         let vertices = prepared_rect_vertices(prepared);
         let vertex_buffer = create_vertex_buffer_or_none(&self.device, &vertices);
+        let prepared_text = self.prepare_text_vertices(prepared)?;
+        let text_vertex_buffer =
+            create_text_vertex_buffer_or_none(&self.device, &prepared_text.vertices);
         let clear_color = prepared.clear_color.unwrap_or(Color::Transparent);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -339,11 +387,66 @@ impl WgpuRenderer {
             timestamp_writes: None,
         });
 
-        if let Some(vertex_buffer) = &vertex_buffer {
-            pass.set_pipeline(&self.rect_pipeline);
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.draw(0..vertices.len() as u32, 0..1);
+        for draw in &prepared.draws {
+            match *draw {
+                PreparedDraw::Rects { start, count } => {
+                    let Some(vertex_buffer) = &vertex_buffer else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.rect_pipeline);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(start as u32..(start + count) as u32, 0..1);
+                }
+                PreparedDraw::Text { index } => {
+                    let Some(vertex_buffer) = &text_vertex_buffer else {
+                        continue;
+                    };
+                    let Some(range) = prepared_text.ranges.get(index).and_then(|range| *range)
+                    else {
+                        continue;
+                    };
+                    pass.set_pipeline(&self.text_pipeline);
+                    pass.set_bind_group(0, self.text_atlas.bind_group(), &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(range.start..(range.start + range.count), 0..1);
+                }
+            }
         }
+
+        Ok(())
+    }
+
+    fn prepare_text_vertices(
+        &mut self,
+        prepared: &PreparedFrame,
+    ) -> Result<PreparedWgpuText, RenderError> {
+        self.text_atlas.ensure_runs(
+            &self.device,
+            &self.queue,
+            &mut self.text_system,
+            &prepared.text_runs,
+        )?;
+
+        let mut vertices = Vec::new();
+        let mut ranges = Vec::with_capacity(prepared.text_runs.len());
+
+        for run in &prepared.text_runs {
+            let start = vertices.len() as u32;
+            for glyph in &run.glyphs {
+                let Some(entry) = self.text_atlas.entry(glyph.glyph.key) else {
+                    continue;
+                };
+                append_text_quad(&mut vertices, prepared.size, glyph.glyph, entry);
+            }
+            let count = vertices.len() as u32 - start;
+            if count == 0 {
+                ranges.push(None);
+            } else {
+                ranges.push(Some(PreparedTextRange { start, count }));
+            }
+        }
+
+        Ok(PreparedWgpuText { vertices, ranges })
     }
 }
 
@@ -353,7 +456,7 @@ impl Renderer for WgpuRenderer {
             fills: true,
             strokes: true,
             lines: false,
-            text: false,
+            text: true,
         }
     }
 
@@ -476,6 +579,80 @@ struct WgpuRectVertex {
     color: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, PartialEq)]
+struct WgpuTextVertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+    color: [f32; 4],
+    mode: f32,
+}
+
+impl WgpuTextVertex {
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<WgpuTextVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 2]>() as u64,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: (std::mem::size_of::<[f32; 2]>() * 2) as u64,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: (std::mem::size_of::<[f32; 2]>() * 2 + std::mem::size_of::<[f32; 4]>())
+                        as u64,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32,
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AtlasEntry {
+    left: i32,
+    top: i32,
+    width: u32,
+    height: u32,
+    uv_min: [f32; 2],
+    uv_max: [f32; 2],
+    mode: f32,
+}
+
+struct WgpuTextAtlas {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    cursor_x: u32,
+    cursor_y: u32,
+    row_height: u32,
+    entries: std::collections::HashMap<GlyphKey, AtlasEntry>,
+}
+
+struct PreparedWgpuText {
+    vertices: Vec<WgpuTextVertex>,
+    ranges: Vec<Option<PreparedTextRange>>,
+}
+
+#[derive(Clone, Copy)]
+struct PreparedTextRange {
+    start: u32,
+    count: u32,
+}
+
 impl From<PreparedRectVertex> for WgpuRectVertex {
     fn from(value: PreparedRectVertex) -> Self {
         Self {
@@ -547,6 +724,82 @@ fn create_rect_pipeline(
     })
 }
 
+fn create_text_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("zri-text-bind-group-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+fn create_text_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("zri-text-sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    })
+}
+
+fn create_text_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    bind_group_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("zri-text-shader"),
+        source: wgpu::ShaderSource::Wgsl(TEXT_SHADER.into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("zri-text-pipeline-layout"),
+        bind_group_layouts: &[bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("zri-text-pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[WgpuTextVertex::layout()],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 fn prepared_rect_vertices(prepared: &PreparedFrame) -> Vec<WgpuRectVertex> {
     prepared
         .rect_vertices
@@ -554,6 +807,264 @@ fn prepared_rect_vertices(prepared: &PreparedFrame) -> Vec<WgpuRectVertex> {
         .copied()
         .map(WgpuRectVertex::from)
         .collect()
+}
+
+fn create_text_vertex_buffer_or_none(
+    device: &wgpu::Device,
+    vertices: &[WgpuTextVertex],
+) -> Option<wgpu::Buffer> {
+    if vertices.is_empty() {
+        return None;
+    }
+
+    Some(
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("zri-text-vertex-buffer"),
+            contents: bytemuck::cast_slice(vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }),
+    )
+}
+
+fn append_text_quad(
+    vertices: &mut Vec<WgpuTextVertex>,
+    frame_size: Size,
+    glyph: crate::text::LaidOutGlyph,
+    entry: AtlasEntry,
+) {
+    if entry.width == 0 || entry.height == 0 {
+        return;
+    }
+
+    let left = glyph.x + entry.left;
+    let top = glyph.y - entry.top;
+    let right = left + entry.width as i32;
+    let bottom = top + entry.height as i32;
+    let color = glyph.color.to_f32_rgba();
+
+    let top_left = logical_to_ndc(Point::new(left as f32, top as f32), frame_size);
+    let top_right = logical_to_ndc(Point::new(right as f32, top as f32), frame_size);
+    let bottom_right = logical_to_ndc(Point::new(right as f32, bottom as f32), frame_size);
+    let bottom_left = logical_to_ndc(Point::new(left as f32, bottom as f32), frame_size);
+    let mode = entry.mode;
+    let uv_min = entry.uv_min;
+    let uv_max = entry.uv_max;
+
+    vertices.extend_from_slice(&[
+        WgpuTextVertex {
+            position: top_left,
+            uv: [uv_min[0], uv_min[1]],
+            color,
+            mode,
+        },
+        WgpuTextVertex {
+            position: top_right,
+            uv: [uv_max[0], uv_min[1]],
+            color,
+            mode,
+        },
+        WgpuTextVertex {
+            position: bottom_right,
+            uv: [uv_max[0], uv_max[1]],
+            color,
+            mode,
+        },
+        WgpuTextVertex {
+            position: top_left,
+            uv: [uv_min[0], uv_min[1]],
+            color,
+            mode,
+        },
+        WgpuTextVertex {
+            position: bottom_right,
+            uv: [uv_max[0], uv_max[1]],
+            color,
+            mode,
+        },
+        WgpuTextVertex {
+            position: bottom_left,
+            uv: [uv_min[0], uv_max[1]],
+            color,
+            mode,
+        },
+    ]);
+}
+
+fn logical_to_ndc(point: Point, size: Size) -> [f32; 2] {
+    [
+        (point.x / size.width) * 2.0 - 1.0,
+        1.0 - (point.y / size.height) * 2.0,
+    ]
+}
+
+impl WgpuTextAtlas {
+    fn new(
+        device: &wgpu::Device,
+        bind_group_layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        let width = 2048;
+        let height = 2048;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("zri-text-atlas"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("zri-text-bind-group"),
+            layout: bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        Self {
+            texture,
+            bind_group,
+            width,
+            height,
+            cursor_x: 0,
+            cursor_y: 0,
+            row_height: 0,
+            entries: std::collections::HashMap::new(),
+        }
+    }
+
+    fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
+
+    fn entry(&self, key: GlyphKey) -> Option<AtlasEntry> {
+        self.entries.get(&key).copied()
+    }
+
+    fn ensure_runs(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text_system: &mut TextSystem,
+        runs: &[PreparedTextRun],
+    ) -> Result<(), RenderError> {
+        for run in runs {
+            for glyph in &run.glyphs {
+                self.ensure_glyph(device, queue, text_system, glyph.glyph.key)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_glyph(
+        &mut self,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text_system: &mut TextSystem,
+        key: GlyphKey,
+    ) -> Result<(), RenderError> {
+        if self.entries.contains_key(&key) {
+            return Ok(());
+        }
+
+        let Some(image) = text_system.rasterize_glyph(key) else {
+            return Ok(());
+        };
+        if image.width == 0 || image.height == 0 {
+            return Ok(());
+        }
+
+        let (x, y) = self.allocate(image.width, image.height)?;
+        let rgba = rgba_pixels_for_glyph(&image);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(image.width * 4),
+                rows_per_image: Some(image.height),
+            },
+            wgpu::Extent3d {
+                width: image.width,
+                height: image.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.entries.insert(
+            key,
+            AtlasEntry {
+                left: image.left,
+                top: image.top,
+                width: image.width,
+                height: image.height,
+                uv_min: [x as f32 / self.width as f32, y as f32 / self.height as f32],
+                uv_max: [
+                    (x + image.width) as f32 / self.width as f32,
+                    (y + image.height) as f32 / self.height as f32,
+                ],
+                mode: match image.format {
+                    GlyphImageFormat::Mask => 0.0,
+                    GlyphImageFormat::Color => 1.0,
+                },
+            },
+        );
+
+        Ok(())
+    }
+
+    fn allocate(&mut self, width: u32, height: u32) -> Result<(u32, u32), RenderError> {
+        if width > self.width || height > self.height {
+            return Err(RenderError::new(
+                "glyph does not fit within text atlas dimensions",
+            ));
+        }
+
+        if self.cursor_x + width > self.width {
+            self.cursor_x = 0;
+            self.cursor_y += self.row_height;
+            self.row_height = 0;
+        }
+
+        if self.cursor_y + height > self.height {
+            return Err(RenderError::new("text atlas is full"));
+        }
+
+        let origin = (self.cursor_x, self.cursor_y);
+        self.cursor_x += width;
+        self.row_height = self.row_height.max(height);
+        Ok(origin)
+    }
+}
+
+fn rgba_pixels_for_glyph(image: &crate::text::GlyphImage) -> Vec<u8> {
+    match image.format {
+        GlyphImageFormat::Mask => image
+            .data
+            .iter()
+            .flat_map(|alpha| [255, 255, 255, *alpha])
+            .collect(),
+        GlyphImageFormat::Color => image.data.clone(),
+    }
 }
 
 fn create_vertex_buffer_or_none(
@@ -654,7 +1165,9 @@ fn wgpu_color(color: Color) -> wgpu::Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Layer, PaintContext, Primitive, Rect, Scene, SceneItem, Stroke};
+    use crate::render::{
+        Layer, PaintContext, Primitive, Rect, Scene, SceneItem, Stroke, prepare_frame,
+    };
 
     #[test]
     fn converts_prepared_vertex_to_wgpu_vertex() {
@@ -937,5 +1450,40 @@ mod tests {
         assert_eq!(image.pixel(2, 2), Some(Rgba8Pixel::new(0, 0, 0, 255)));
         assert_eq!(image.pixel(3, 3), Some(Rgba8Pixel::new(255, 255, 255, 255)));
         assert_eq!(image.pixel(7, 7), Some(Rgba8Pixel::new(0, 0, 0, 255)));
+    }
+
+    #[test]
+    #[ignore]
+    fn reads_back_text_pixels() {
+        let mut renderer = WgpuRenderer::new().unwrap();
+        let target = WgpuTarget::new(&renderer, Size::new(64.0, 32.0));
+        let mut scene = Scene::new();
+        scene.clear_color(Color::BLACK);
+        scene.text(
+            Point::new(4.0, 8.0),
+            "x",
+            crate::render::TextStyle::new(Color::WHITE, 18.0),
+        );
+        let frame = Frame::new(Size::new(64.0, 32.0), scene);
+
+        renderer.render_to_target(&target, &frame).unwrap();
+        let image = renderer.read_target(&target).unwrap();
+
+        let mut found_non_black = false;
+        for y in 0..image.height {
+            for x in 0..image.width {
+                if let Some(pixel) = image.pixel(x, y)
+                    && pixel != Rgba8Pixel::new(0, 0, 0, 255)
+                {
+                    found_non_black = true;
+                    break;
+                }
+            }
+            if found_non_black {
+                break;
+            }
+        }
+
+        assert!(found_non_black);
     }
 }

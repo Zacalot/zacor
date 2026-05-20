@@ -451,6 +451,11 @@ fn demo_frame(size: PhysicalSize<u32>) -> Frame {
         paint.fill_rect(white_rect, Color::rgb(235, 238, 245));
         paint.hit_region(WHITE_RECT_HIT, white_rect);
         paint.focus_region(WHITE_RECT_FOCUS, white_rect);
+        paint.text(
+            Point::new(width * 0.12, height * 0.22),
+            "zri",
+            zri::render::TextStyle::new(Color::rgb(20, 24, 32), 28.0),
+        );
     });
 
     paint.with_layer(Layer(2), |paint| {
@@ -474,7 +479,7 @@ mod tests {
     #[test]
     fn demo_frame_contains_supported_wgpu_primitives_only() {
         let frame = demo_frame(PhysicalSize::new(800, 600));
-        assert_eq!(frame.scene.items().len(), 4);
+        assert_eq!(frame.scene.items().len(), 5);
     }
 
     #[test]

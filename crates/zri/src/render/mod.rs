@@ -13,7 +13,10 @@ mod wgpu_backend;
 pub use color::Color;
 pub use geometry::{Coord, Insets, Point, Rect, Size};
 pub use paint::PaintContext;
-pub use prepared::{PreparedFrame, PreparedRectVertex, prepare_frame};
+pub use prepared::{
+    PreparedDraw, PreparedFrame, PreparedRectVertex, PreparedTextGlyph, PreparedTextRun,
+    prepare_frame, prepare_frame_with_text,
+};
 pub use raster::{RasterImage, RasterRenderer};
 pub use renderer::{RenderCapabilities, RenderError, RenderResult, Renderer};
 pub use scene::{

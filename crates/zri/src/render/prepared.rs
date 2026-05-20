@@ -1,3 +1,5 @@
+use crate::text::{LaidOutGlyph, TextSystem};
+
 use super::{Color, Frame, Point, Primitive, Rect, Size, Stroke, SurfaceFallback};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -5,6 +7,8 @@ pub struct PreparedFrame {
     pub size: Size,
     pub clear_color: Option<Color>,
     pub rect_vertices: Vec<PreparedRectVertex>,
+    pub text_runs: Vec<PreparedTextRun>,
+    pub draws: Vec<PreparedDraw>,
     pub rendered_primitives: usize,
     pub unsupported_primitives: usize,
 }
@@ -15,11 +19,29 @@ pub struct PreparedRectVertex {
     pub color: [f32; 4],
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum PreparedDraw {
+    Rects { start: usize, count: usize },
+    Text { index: usize },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PreparedTextGlyph {
+    pub glyph: LaidOutGlyph,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreparedTextRun {
+    pub glyphs: Vec<PreparedTextGlyph>,
+}
+
 pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
     let mut prepared = PreparedFrame {
         size: frame.size,
         clear_color: None,
         rect_vertices: Vec::new(),
+        text_runs: Vec::new(),
+        draws: Vec::new(),
         rendered_primitives: 0,
         unsupported_primitives: 0,
     };
@@ -35,6 +57,7 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
         match &item.primitive {
             Primitive::Clear { .. } => {}
             Primitive::FillRect { rect, color } => {
+                let start = prepared.rect_vertices.len();
                 if push_fill_rect(
                     &mut prepared.rect_vertices,
                     frame.size,
@@ -43,9 +66,14 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
                     *color,
                 ) {
                     prepared.rendered_primitives += 1;
+                    prepared.draws.push(PreparedDraw::Rects {
+                        start,
+                        count: prepared.rect_vertices.len() - start,
+                    });
                 }
             }
             Primitive::StrokeRect { rect, stroke } => {
+                let start = prepared.rect_vertices.len();
                 if push_stroke_rect(
                     &mut prepared.rect_vertices,
                     frame.size,
@@ -54,6 +82,10 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
                     *stroke,
                 ) {
                     prepared.rendered_primitives += 1;
+                    prepared.draws.push(PreparedDraw::Rects {
+                        start,
+                        count: prepared.rect_vertices.len() - start,
+                    });
                 }
             }
             Primitive::SurfaceSlot { rect, fallback, .. } => match fallback {
@@ -61,6 +93,7 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
                     prepared.unsupported_primitives += 1;
                 }
                 SurfaceFallback::FillRect { color } => {
+                    let start = prepared.rect_vertices.len();
                     if push_fill_rect(
                         &mut prepared.rect_vertices,
                         frame.size,
@@ -69,9 +102,14 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
                         *color,
                     ) {
                         prepared.rendered_primitives += 1;
+                        prepared.draws.push(PreparedDraw::Rects {
+                            start,
+                            count: prepared.rect_vertices.len() - start,
+                        });
                     }
                 }
                 SurfaceFallback::StrokeRect { stroke } => {
+                    let start = prepared.rect_vertices.len();
                     if push_stroke_rect(
                         &mut prepared.rect_vertices,
                         frame.size,
@@ -80,6 +118,10 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
                         *stroke,
                     ) {
                         prepared.rendered_primitives += 1;
+                        prepared.draws.push(PreparedDraw::Rects {
+                            start,
+                            count: prepared.rect_vertices.len() - start,
+                        });
                     }
                 }
                 SurfaceFallback::Text { .. } => {
@@ -93,6 +135,179 @@ pub fn prepare_frame(frame: &Frame) -> PreparedFrame {
     }
 
     prepared
+}
+
+pub fn prepare_frame_with_text(frame: &Frame, text_system: &mut TextSystem) -> PreparedFrame {
+    let mut prepared = PreparedFrame {
+        size: frame.size,
+        clear_color: None,
+        rect_vertices: Vec::new(),
+        text_runs: Vec::new(),
+        draws: Vec::new(),
+        rendered_primitives: 0,
+        unsupported_primitives: 0,
+    };
+
+    for item in frame.scene.items() {
+        if let Primitive::Clear { color } = &item.primitive {
+            prepared.clear_color = Some(*color);
+            prepared.rendered_primitives += 1;
+        }
+    }
+
+    for item in frame.scene.items_in_paint_order() {
+        match &item.primitive {
+            Primitive::Clear { .. } => {}
+            Primitive::FillRect { rect, color } => {
+                let start = prepared.rect_vertices.len();
+                if push_fill_rect(
+                    &mut prepared.rect_vertices,
+                    frame.size,
+                    *rect,
+                    item.clip,
+                    *color,
+                ) {
+                    prepared.rendered_primitives += 1;
+                    prepared.draws.push(PreparedDraw::Rects {
+                        start,
+                        count: prepared.rect_vertices.len() - start,
+                    });
+                }
+            }
+            Primitive::StrokeRect { rect, stroke } => {
+                let start = prepared.rect_vertices.len();
+                if push_stroke_rect(
+                    &mut prepared.rect_vertices,
+                    frame.size,
+                    *rect,
+                    item.clip,
+                    *stroke,
+                ) {
+                    prepared.rendered_primitives += 1;
+                    prepared.draws.push(PreparedDraw::Rects {
+                        start,
+                        count: prepared.rect_vertices.len() - start,
+                    });
+                }
+            }
+            Primitive::Text {
+                position,
+                text,
+                style,
+            } => {
+                let layout = text_system.layout_line(*position, text, *style);
+                if layout.glyphs.is_empty() {
+                    continue;
+                }
+
+                let run_index = prepared.text_runs.len();
+                prepared.text_runs.push(PreparedTextRun {
+                    glyphs: layout
+                        .glyphs
+                        .into_iter()
+                        .filter(|glyph| glyph_visible(text_system, glyph, item.clip, frame.size))
+                        .map(|glyph| PreparedTextGlyph { glyph })
+                        .collect(),
+                });
+
+                if !prepared.text_runs[run_index].glyphs.is_empty() {
+                    prepared.rendered_primitives += 1;
+                    prepared.draws.push(PreparedDraw::Text { index: run_index });
+                }
+            }
+            Primitive::SurfaceSlot { rect, fallback, .. } => match fallback {
+                SurfaceFallback::None => {
+                    prepared.unsupported_primitives += 1;
+                }
+                SurfaceFallback::FillRect { color } => {
+                    let start = prepared.rect_vertices.len();
+                    if push_fill_rect(
+                        &mut prepared.rect_vertices,
+                        frame.size,
+                        *rect,
+                        item.clip,
+                        *color,
+                    ) {
+                        prepared.rendered_primitives += 1;
+                        prepared.draws.push(PreparedDraw::Rects {
+                            start,
+                            count: prepared.rect_vertices.len() - start,
+                        });
+                    }
+                }
+                SurfaceFallback::StrokeRect { stroke } => {
+                    let start = prepared.rect_vertices.len();
+                    if push_stroke_rect(
+                        &mut prepared.rect_vertices,
+                        frame.size,
+                        *rect,
+                        item.clip,
+                        *stroke,
+                    ) {
+                        prepared.rendered_primitives += 1;
+                        prepared.draws.push(PreparedDraw::Rects {
+                            start,
+                            count: prepared.rect_vertices.len() - start,
+                        });
+                    }
+                }
+                SurfaceFallback::Text {
+                    position,
+                    text,
+                    style,
+                } => {
+                    let layout = text_system.layout_line(*position, text, *style);
+                    if layout.glyphs.is_empty() {
+                        continue;
+                    }
+
+                    let run_index = prepared.text_runs.len();
+                    prepared.text_runs.push(PreparedTextRun {
+                        glyphs: layout
+                            .glyphs
+                            .into_iter()
+                            .filter(|glyph| {
+                                glyph_visible(text_system, glyph, item.clip, frame.size)
+                            })
+                            .map(|glyph| PreparedTextGlyph { glyph })
+                            .collect(),
+                    });
+
+                    if !prepared.text_runs[run_index].glyphs.is_empty() {
+                        prepared.rendered_primitives += 1;
+                        prepared.draws.push(PreparedDraw::Text { index: run_index });
+                    }
+                }
+            },
+            Primitive::Line { .. } => {
+                prepared.unsupported_primitives += 1;
+            }
+        }
+    }
+
+    prepared
+}
+
+fn glyph_visible(
+    text_system: &mut TextSystem,
+    glyph: &LaidOutGlyph,
+    clip: Option<Rect>,
+    frame_size: Size,
+) -> bool {
+    let Some(image) = text_system.rasterize_glyph(glyph.key) else {
+        return false;
+    };
+
+    let bounds = Rect::from_xywh(
+        (glyph.x + image.left) as f32,
+        (glyph.y - image.top) as f32,
+        image.width as f32,
+        image.height as f32,
+    );
+
+    !bounds
+        .intersect(&effective_clip(frame_size, clip))
+        .is_empty()
 }
 
 fn effective_clip(frame_size: Size, clip: Option<Rect>) -> Rect {
@@ -220,6 +435,7 @@ fn build_scene(items: Vec<super::SceneItem>) -> Frame {
 mod tests {
     use super::*;
     use crate::render::{Layer, Scene, SurfaceKind, SurfaceSlotId, TextStyle};
+    use crate::text::TextSystem;
 
     const RED: Color = Color::rgb(255, 0, 0);
     const GREEN: Color = Color::rgb(0, 255, 0);
@@ -416,6 +632,54 @@ mod tests {
         assert_eq!(prepared.rendered_primitives, 0);
         assert_eq!(prepared.unsupported_primitives, 2);
         assert!(prepared.rect_vertices.is_empty());
+    }
+
+    #[test]
+    fn prepare_frame_with_text_lowers_text_runs() {
+        let mut scene = Scene::new();
+        scene.text(Point::new(4.0, 8.0), "hello", TextStyle::new(RED, 12.0));
+        let mut text_system = TextSystem::new();
+
+        let prepared = prepare_frame_with_text(&frame(scene), &mut text_system);
+
+        assert_eq!(prepared.rendered_primitives, 1);
+        assert_eq!(prepared.unsupported_primitives, 0);
+        assert_eq!(prepared.text_runs.len(), 1);
+        assert!(!prepared.text_runs[0].glyphs.is_empty());
+        assert_eq!(prepared.draws, vec![PreparedDraw::Text { index: 0 }]);
+    }
+
+    #[test]
+    fn prepare_frame_with_text_preserves_draw_order_between_rects() {
+        let mut scene = Scene::new();
+        scene.fill_rect(Rect::from_xywh(0.0, 0.0, 10.0, 10.0), RED);
+        scene.push_item(
+            item(Primitive::Text {
+                position: Point::new(2.0, 8.0),
+                text: "x".to_string(),
+                style: TextStyle::new(GREEN, 12.0),
+            })
+            .layered(Layer(1)),
+        );
+        scene.push_item(
+            item(Primitive::FillRect {
+                rect: Rect::from_xywh(2.0, 2.0, 4.0, 4.0),
+                color: BLUE,
+            })
+            .layered(Layer(2)),
+        );
+        let mut text_system = TextSystem::new();
+
+        let prepared = prepare_frame_with_text(&frame(scene), &mut text_system);
+
+        assert_eq!(
+            prepared.draws,
+            vec![
+                PreparedDraw::Rects { start: 0, count: 6 },
+                PreparedDraw::Text { index: 0 },
+                PreparedDraw::Rects { start: 6, count: 6 },
+            ]
+        );
     }
 
     #[test]
