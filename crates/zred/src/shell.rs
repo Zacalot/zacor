@@ -1,7 +1,7 @@
+use crate::kernel::WorkspaceId;
 use crate::runtime::AppRuntime;
 #[cfg(test)]
 use crate::session::SessionPackageRuntime;
-use crate::kernel::WorkspaceId;
 use crate::session::{
     AppInputEvent, Session, SessionFrontendEffect, SessionInputController, SessionView,
 };

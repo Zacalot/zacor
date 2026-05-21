@@ -29,7 +29,7 @@ pub fn run() -> Result<()> {
 
 #[cfg(test)]
 mod frontend_tests {
-    use super::{frontend_for_args, FrontendKind};
+    use super::{FrontendKind, frontend_for_args};
 
     #[test]
     fn defaults_to_native_frontend() {
@@ -38,7 +38,10 @@ mod frontend_tests {
 
     #[test]
     fn keeps_native_when_native_flag_is_present() {
-        assert_eq!(frontend_for_args(["zred", "--native"]), FrontendKind::Native);
+        assert_eq!(
+            frontend_for_args(["zred", "--native"]),
+            FrontendKind::Native
+        );
     }
 
     #[test]

@@ -7341,6 +7341,7 @@ dependencies = [
  "windows-sys 0.52.0",
  "zacor-host",
  "zacor-package",
+ "zacor-protocol",
 ]
 
 [[package]]
@@ -7682,8 +7683,11 @@ dependencies = [
  "cosmic-text",
  "mlua",
  "pollster",
+ "serde",
+ "serde_json",
  "wgpu",
  "winit",
+ "zacor-protocol",
 ]
 
 [[package]]

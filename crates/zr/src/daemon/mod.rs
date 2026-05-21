@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use zacor_host::protocol::DaemonRefusal;
 
 mod capability_router;
+mod catalog;
 mod dispatch;
 mod idle;
 mod module_cache;

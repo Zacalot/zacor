@@ -11,5 +11,8 @@ bytemuck = { version = "1", features = ["derive"] }
 cosmic-text = "0.19"
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 pollster = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+zacor-protocol.workspace = true
 wgpu = "24"
 winit = "0.30"

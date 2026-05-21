@@ -5,8 +5,10 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use zacor_protocol::DaemonRefusal;
 
 use super::capability_router::CapabilityRouter;
+use super::catalog;
 use super::dispatch;
 use super::module_cache::LibraryPool;
 use super::service_supervisor::{self, ManagedService};
@@ -42,6 +44,38 @@ pub(super) fn handle_connection(
             ..Default::default()
         },
         "status" => service_supervisor::handle_status(services),
+        "list-packages" => DaemonResponse {
+            ok: true,
+            result: Some(serde_json::to_value(catalog::list_packages(home)?)?),
+            ..Default::default()
+        },
+        "describe-package" => {
+            let name = req.name.as_deref().unwrap_or("");
+            if name.is_empty() {
+                DaemonResponse {
+                    ok: false,
+                    refusal: Some(DaemonRefusal::InvalidRequest {
+                        reason: "describe-package requires package name".into(),
+                    }),
+                    error: Some("describe-package requires package name".into()),
+                    ..Default::default()
+                }
+            } else {
+                match catalog::describe_package(home, name)? {
+                    Some(descriptor) => DaemonResponse {
+                        ok: true,
+                        result: Some(serde_json::to_value(descriptor)?),
+                        ..Default::default()
+                    },
+                    None => DaemonResponse {
+                        ok: false,
+                        refusal: Some(DaemonRefusal::PackageNotFound { name: name.into() }),
+                        error: Some(format!("package not found: {}", name)),
+                        ..Default::default()
+                    },
+                }
+            }
+        }
         "start-service" => {
             let name = req.name.as_deref().unwrap_or("");
             if name.is_empty() {

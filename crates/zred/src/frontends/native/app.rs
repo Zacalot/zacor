@@ -3,8 +3,8 @@ use super::input;
 use super::scene::{self, SceneHotspotAction};
 use super::window::{WindowBinding, WindowRegistry};
 use crate::kernel::{PaneId, WorkspaceId};
-use crate::shell::App;
 use crate::session::SessionFrontendEffect;
+use crate::shell::App;
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -140,8 +140,7 @@ impl NativeApp {
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) {
         let workspace_id = allocate_native_workspace_id();
-        let app = App::with_workspace_id(workspace_id)
-            .expect("native app state should initialize");
+        let app = App::with_workspace_id(workspace_id).expect("native app state should initialize");
         let workspace_id = app.workspace_id();
         let attributes = WindowAttributes::default()
             .with_title(native_window_title(workspace_id))
@@ -158,7 +157,8 @@ impl NativeApp {
             .create_window_state(window)
             .expect("window compositor state should initialize");
 
-        self.windows.insert(window_id, WindowBinding { workspace_id });
+        self.windows
+            .insert(window_id, WindowBinding { workspace_id });
         self.window_states.insert(
             window_id,
             NativeWindow {

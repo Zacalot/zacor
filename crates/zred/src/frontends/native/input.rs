@@ -152,6 +152,9 @@ mod tests {
 
     #[test]
     fn printable_char_ignores_control_text_input() {
-        assert_eq!(printable_char_from_sources(Some("w"), Some("\u{17}"), true, false), Some('w'));
+        assert_eq!(
+            printable_char_from_sources(Some("w"), Some("\u{17}"), true, false),
+            Some('w')
+        );
     }
 }

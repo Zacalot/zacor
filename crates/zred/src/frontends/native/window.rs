@@ -138,7 +138,10 @@ mod tests {
 
         registry.bind_workspace(window_id, WorkspaceId::new(11));
 
-        assert_eq!(registry.window_for_workspace(WorkspaceId::new(11)), Some(window_id));
+        assert_eq!(
+            registry.window_for_workspace(WorkspaceId::new(11)),
+            Some(window_id)
+        );
         assert_eq!(registry.window_for_workspace(WorkspaceId::new(12)), None);
     }
 

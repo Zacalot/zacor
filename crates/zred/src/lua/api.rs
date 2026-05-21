@@ -32,9 +32,7 @@ fn app_api(lua: &Lua, command_api_handle: LuaCommandApi) -> Result<Table> {
     app.set(
         "new_window",
         lua.create_function(move |_, ()| {
-            new_window_api
-                .new_window()
-                .map_err(mlua::Error::external)?;
+            new_window_api.new_window().map_err(mlua::Error::external)?;
             Ok(())
         })?,
     )?;

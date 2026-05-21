@@ -1399,7 +1399,10 @@ fn parse_lowers_window_new_to_typed_invocation() {
 
     let parsed = registry.parse("window.new");
 
-    assert_eq!(parsed, CommandRequest::Invocation(CommandInvocation::NewWindow));
+    assert_eq!(
+        parsed,
+        CommandRequest::Invocation(CommandInvocation::NewWindow)
+    );
 }
 
 #[test]

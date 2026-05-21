@@ -5,3 +5,4 @@ pub mod keymap;
 pub mod lua;
 pub mod render;
 pub mod text;
+pub mod zr;
