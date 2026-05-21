@@ -151,6 +151,12 @@ impl FunctionOutcome {
     }
 }
 
+pub trait FunctionInvoker {
+    type Error;
+
+    fn invoke_function(&self, name: &FunctionName) -> Result<FunctionOutcome, Self::Error>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

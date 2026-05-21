@@ -161,7 +161,7 @@ pub struct ModifiersChangedEvent {
     pub modifiers: Modifiers,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Keystroke {
     pub key: Key,
     pub text: Option<String>,
@@ -169,7 +169,7 @@ pub struct Keystroke {
     pub location: KeyLocation,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Key {
     Character(String),
     Named(NamedKey),
@@ -179,7 +179,7 @@ pub enum Key {
     Unknown(String),
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum NamedKey {
     Escape,
     Enter,
@@ -198,7 +198,7 @@ pub enum NamedKey {
     PageDown,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ModifierKey {
     Shift,
     Control,
@@ -209,7 +209,7 @@ pub enum ModifierKey {
     CapsLock,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum KeyLocation {
     #[default]
     Standard,
@@ -244,7 +244,7 @@ pub enum PointerButton {
     Other(u16),
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Modifiers {
     pub shift: bool,
     pub control: bool,

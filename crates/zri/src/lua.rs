@@ -5,8 +5,8 @@ use std::rc::Rc;
 use mlua::{Function, Lua, RegistryKey, Table, Value};
 
 use crate::function::{
-    FunctionContext, FunctionError, FunctionMetadata, FunctionName, FunctionOutcome,
-    FunctionRegistry, LuaFunctionId,
+    FunctionContext, FunctionError, FunctionInvoker, FunctionMetadata, FunctionName,
+    FunctionOutcome, FunctionRegistry, LuaFunctionId,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,6 +100,10 @@ impl LuaHost {
     }
 
     pub fn call_function(&self, name: &str) -> Result<FunctionOutcome, LuaHostError> {
+        self.call_function_by_name(name)
+    }
+
+    fn call_function_by_name(&self, name: &str) -> Result<FunctionOutcome, LuaHostError> {
         let id = self
             .functions
             .borrow()
@@ -160,6 +164,14 @@ impl LuaHost {
     }
 }
 
+impl FunctionInvoker for LuaHost {
+    type Error = LuaHostError;
+
+    fn invoke_function(&self, name: &FunctionName) -> Result<FunctionOutcome, Self::Error> {
+        self.call_function_by_name(name.as_str())
+    }
+}
+
 fn install_zri_api(
     lua: &Lua,
     functions: Rc<RefCell<FunctionRegistry>>,
@@ -204,6 +216,13 @@ fn function_name_error(error: FunctionError) -> mlua::Error {
 mod tests {
     use super::*;
 
+    fn invoke_through_trait<I: FunctionInvoker>(
+        invoker: &I,
+        name: &FunctionName,
+    ) -> Result<FunctionOutcome, I::Error> {
+        invoker.invoke_function(name)
+    }
+
     #[test]
     fn lua_host_starts_with_empty_registry() {
         let host = LuaHost::new().unwrap();
@@ -247,6 +266,25 @@ mod tests {
         let outcome = host.call_function("demo.hello").unwrap();
 
         assert_eq!(outcome.logs(), &["hello from lua".to_string()]);
+    }
+
+    #[test]
+    fn lua_host_invokes_functions_through_generic_trait() {
+        let host = LuaHost::new().unwrap();
+        host.load_chunk(
+            "test.lua",
+            r#"
+                zri.register_function("demo.hello", function(ctx)
+                    ctx.log("hello from invoker")
+                end)
+            "#,
+        )
+        .unwrap();
+
+        let outcome =
+            invoke_through_trait(&host, &FunctionName::new("demo.hello").unwrap()).unwrap();
+
+        assert_eq!(outcome.logs(), &["hello from invoker".to_string()]);
     }
 
     #[test]
