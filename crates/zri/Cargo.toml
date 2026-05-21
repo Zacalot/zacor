@@ -9,6 +9,7 @@ description = "Zacor interface rendering foundation"
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 cosmic-text = "0.19"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 pollster = "0.4"
 wgpu = "24"
 winit = "0.30"
