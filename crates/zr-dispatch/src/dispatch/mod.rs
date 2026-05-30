@@ -25,6 +25,12 @@ use session::{
 };
 pub use session::{InvocationEvent, InvocationMessageLevel};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasmDispatchPreference {
+    PreferDaemon,
+    InProcessOnly,
+}
+
 pub struct ResolvedPackage {
     pub receipt: Receipt,
     pub definition: PackageDefinition,
@@ -247,6 +253,8 @@ fn validate_command_input_mode(command: &CommandDefinition) -> Result<()> {
 struct LocalPackageRouter<'a> {
     home: &'a Path,
     capabilities: &'a CapabilityRegistry,
+    cwd_override: Option<&'a Path>,
+    wasm_dispatch: WasmDispatchPreference,
 }
 
 impl PackageRouter for LocalPackageRouter<'_> {
@@ -269,6 +277,8 @@ impl PackageRouter for LocalPackageRouter<'_> {
             package,
             command,
             args,
+            self.cwd_override,
+            self.wasm_dispatch,
             self.capabilities,
             depth,
             max_depth,
@@ -538,6 +548,8 @@ fn invoke_package_local(
     package: &str,
     command_path: &str,
     parsed_flags: &BTreeMap<String, String>,
+    cwd_override: Option<&Path>,
+    wasm_dispatch: WasmDispatchPreference,
     capabilities: &CapabilityRegistry,
     depth: usize,
     max_depth: usize,
@@ -548,7 +560,7 @@ fn invoke_package_local(
     let command = find_command(&resolved.definition.commands, command_path)?;
     validate_command_input_mode(command)?;
     let (env_vars, placeholders) =
-        build_invocation_env(home, &resolved, command_path, parsed_flags)?;
+        build_invocation_env(home, &resolved, command_path, parsed_flags, cwd_override)?;
 
     if resolved.definition.wasm.is_some() {
         return execute_wasm_with_handler(
@@ -558,6 +570,7 @@ fn invoke_package_local(
             command,
             parsed_flags,
             &env_vars,
+            wasm_dispatch,
             capabilities,
             package_router,
             depth,
@@ -637,6 +650,8 @@ pub fn invoke_local_with_events(
     let package_router = LocalPackageRouter {
         home,
         capabilities: &capabilities,
+        cwd_override: None,
+        wasm_dispatch: WasmDispatchPreference::PreferDaemon,
     };
 
     invoke_package_local(
@@ -644,6 +659,39 @@ pub fn invoke_local_with_events(
         package,
         command_path,
         parsed_flags,
+        None,
+        WasmDispatchPreference::PreferDaemon,
+        &capabilities,
+        0,
+        DEFAULT_MAX_CALL_DEPTH,
+        &package_router,
+        on_event,
+    )
+}
+
+pub fn invoke_in_process_with_events_at_cwd(
+    home: &Path,
+    package: &str,
+    command_path: &str,
+    parsed_flags: &BTreeMap<String, String>,
+    cwd: &Path,
+    on_event: &mut dyn FnMut(InvocationEvent) -> std::result::Result<(), String>,
+) -> Result<i32> {
+    let capabilities = crate::providers::build_default_registry();
+    let package_router = LocalPackageRouter {
+        home,
+        capabilities: &capabilities,
+        cwd_override: Some(cwd),
+        wasm_dispatch: WasmDispatchPreference::InProcessOnly,
+    };
+
+    invoke_package_local(
+        home,
+        package,
+        command_path,
+        parsed_flags,
+        Some(cwd),
+        WasmDispatchPreference::InProcessOnly,
         &capabilities,
         0,
         DEFAULT_MAX_CALL_DEPTH,
@@ -657,11 +705,11 @@ fn build_invocation_env(
     resolved: &ResolvedPackage,
     command_path: &str,
     parsed_flags: &BTreeMap<String, String>,
+    cwd_override: Option<&Path>,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>)> {
-    let cwd = std::env::current_dir().ok();
-    let project_root = cwd
-        .as_ref()
-        .and_then(|cwd| paths::discover_project_root(cwd, home));
+    let current_dir = std::env::current_dir().ok();
+    let cwd = cwd_override.or(current_dir.as_deref());
+    let project_root = cwd.and_then(|cwd| paths::discover_project_root(cwd, home));
     let project_config = project_root
         .as_ref()
         .and_then(|root| config::read_project(root).ok());
@@ -680,7 +728,7 @@ fn build_invocation_env(
         project_root.as_deref(),
         resolved.definition.project_data,
         project_config.as_ref(),
-        cwd.as_deref(),
+        cwd,
     ))
 }
 
@@ -800,6 +848,7 @@ fn execute_wasm_with_handler(
     command: &CommandDefinition,
     parsed_flags: &BTreeMap<String, String>,
     env_vars: &BTreeMap<String, String>,
+    wasm_dispatch: WasmDispatchPreference,
     capabilities: &CapabilityRegistry,
     package_router: &dyn PackageRouter,
     depth: usize,
@@ -828,11 +877,12 @@ fn execute_wasm_with_handler(
         command.input.is_some(),
     ));
 
-    if resolved
-        .definition
-        .service
-        .as_ref()
-        .is_some_and(|service| service.library)
+    if wasm_dispatch == WasmDispatchPreference::PreferDaemon
+        && resolved
+            .definition
+            .service
+            .as_ref()
+            .is_some_and(|service| service.library)
     {
         match crate::daemon_client::try_open_library_invoke_stream(
             home,
@@ -878,40 +928,42 @@ fn execute_wasm_with_handler(
         }
     }
 
-    match crate::daemon_client::try_open_dispatch_stream(
-        home,
-        &resolved.definition.name,
-        &resolved.version,
-        env_vars,
-    ) {
-        Ok(Some(stream)) => {
-            let tcp_reader = BufReader::new(
-                stream
-                    .try_clone()
-                    .context("cloning daemon stream for session read")?,
-            );
-            let mut output_handler = CallbackOutputHandler::new(on_event);
-            let result = run_protocol_session_with_handler(
-                tcp_reader,
-                stream,
-                &invoke_msg,
-                true,
-                &resolved.definition,
-                command,
-                capabilities,
-                Some(package_router),
-                &mut output_handler,
-                None,
-                depth,
-                max_depth,
-            );
-            if let Some(error) = output_handler.take_error() {
-                bail!("{}", error);
+    if wasm_dispatch == WasmDispatchPreference::PreferDaemon {
+        match crate::daemon_client::try_open_dispatch_stream(
+            home,
+            &resolved.definition.name,
+            &resolved.version,
+            env_vars,
+        ) {
+            Ok(Some(stream)) => {
+                let tcp_reader = BufReader::new(
+                    stream
+                        .try_clone()
+                        .context("cloning daemon stream for session read")?,
+                );
+                let mut output_handler = CallbackOutputHandler::new(on_event);
+                let result = run_protocol_session_with_handler(
+                    tcp_reader,
+                    stream,
+                    &invoke_msg,
+                    true,
+                    &resolved.definition,
+                    command,
+                    capabilities,
+                    Some(package_router),
+                    &mut output_handler,
+                    None,
+                    depth,
+                    max_depth,
+                );
+                if let Some(error) = output_handler.take_error() {
+                    bail!("{}", error);
+                }
+                return result;
             }
-            return result;
+            Ok(None) => {}
+            Err(_) => {}
         }
-        Ok(None) => {}
-        Err(_) => {}
     }
 
     let host = wasm_runtime::WasmHost::shared()?;
@@ -1103,6 +1155,8 @@ pub fn run(home: &Path, name: &str, args: &[String], output_mode: OutputMode) ->
     let package_router = LocalPackageRouter {
         home,
         capabilities: &capabilities,
+        cwd_override: None,
+        wasm_dispatch: WasmDispatchPreference::PreferDaemon,
     };
 
     execute(
@@ -1475,6 +1529,56 @@ commands:
                     text: "fixture done error".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn build_invocation_env_uses_cwd_override() {
+        let home = test_util::temp_home("dispatch-cwd-override");
+        let package_name = "cwdpkg";
+        let version = "1.0.0";
+        receipt::write(
+            home.path(),
+            package_name,
+            &receipt::Receipt::new(
+                version.to_string(),
+                receipt::SourceRecord::Local {
+                    path: home.path().to_string_lossy().into_owned(),
+                },
+            ),
+        )
+        .unwrap();
+
+        let store = paths::store_path(home.path(), package_name, version);
+        fs::create_dir_all(&store).unwrap();
+        fs::write(
+            store.join("package.yaml"),
+            format!(
+                "name: {package_name}\nversion: \"{version}\"\nproject-data: true\ncommands:\n  default: {{}}\n"
+            ),
+        )
+        .unwrap();
+        let cwd = home.path().join("caller");
+        fs::create_dir_all(&cwd).unwrap();
+
+        let resolved = resolve(home.path(), package_name).unwrap();
+        let (env, _) = build_invocation_env(
+            home.path(),
+            &resolved,
+            "default",
+            &BTreeMap::new(),
+            Some(&cwd),
+        )
+        .unwrap();
+
+        assert_eq!(
+            env.get("ZR_DATA").map(String::as_str),
+            Some(
+                cwd.join(".zr")
+                    .join(package_name)
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
     }
 }

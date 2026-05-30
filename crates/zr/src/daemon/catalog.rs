@@ -121,6 +121,7 @@ mod tests {
     use super::*;
     use crate::paths;
     use crate::receipt::{Receipt, SourceRecord};
+    use std::collections::BTreeMap;
 
     fn local_source() -> SourceRecord {
         SourceRecord::Local {

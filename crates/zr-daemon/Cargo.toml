@@ -15,6 +15,7 @@ tempfile = "3"
 zacor-host = { workspace = true, features = ["testing"] }
 zacor-package.workspace = true
 zacor-protocol.workspace = true
+zr-dispatch.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [

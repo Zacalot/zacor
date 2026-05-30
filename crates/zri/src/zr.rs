@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use serde::Deserialize;
 use zacor_protocol::DaemonRefusal;
 use zacor_protocol::daemon_catalog::{InstalledPackageSummary, PackageDescriptor};
+use zacor_protocol::daemon_invoke::{CommandInvocationRequest, InvocationEvent};
 
 const DEFAULT_DAEMON_ADDR: &str = "127.0.0.1:19100";
 
@@ -33,6 +34,62 @@ impl ZrClient {
             &serde_json::json!({"request": "describe-package", "name": name}),
             "describe-package",
         )
+    }
+
+    pub fn invoke_command(
+        &self,
+        request: CommandInvocationRequest,
+    ) -> Result<InvocationStream, ZrClientError> {
+        let mut stream =
+            TcpStream::connect(&self.addr).map_err(|error| ZrClientError::Connect {
+                addr: self.addr.clone(),
+                source: error,
+            })?;
+
+        let request_json = serde_json::to_string(&serde_json::json!({
+            "request": "invoke-command",
+            "invoke": request,
+        }))
+        .map_err(|error| ZrClientError::Serialize {
+            request: "invoke-command".to_string(),
+            source: error,
+        })?;
+        writeln!(stream, "{}", request_json).map_err(|error| ZrClientError::Write {
+            request: "invoke-command".to_string(),
+            source: error,
+        })?;
+        stream.flush().map_err(|error| ZrClientError::Write {
+            request: "invoke-command".to_string(),
+            source: error,
+        })?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|error| ZrClientError::Read {
+                request: "invoke-command".to_string(),
+                source: error,
+            })?;
+
+        let response: DaemonEnvelope =
+            serde_json::from_str(line.trim()).map_err(|error| ZrClientError::Parse {
+                request: "invoke-command".to_string(),
+                source: error,
+            })?;
+
+        if !response.ok {
+            if let Some(refusal) = response.refusal {
+                return Err(ZrClientError::DaemonRefusal(refusal));
+            }
+            return Err(ZrClientError::DaemonError(
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown daemon error".to_string()),
+            ));
+        }
+
+        Ok(InvocationStream { reader })
     }
 
     fn send_request<T: for<'de> Deserialize<'de>>(
@@ -97,6 +154,33 @@ impl ZrClient {
 }
 
 #[derive(Debug)]
+pub struct InvocationStream {
+    reader: BufReader<TcpStream>,
+}
+
+impl InvocationStream {
+    pub fn next_event(&mut self) -> Result<Option<InvocationEvent>, ZrClientError> {
+        loop {
+            let mut line = String::new();
+            let bytes = self
+                .reader
+                .read_line(&mut line)
+                .map_err(|error| ZrClientError::ReadEvent { source: error })?;
+            if bytes == 0 {
+                return Ok(None);
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let event = serde_json::from_str(trimmed)
+                .map_err(|error| ZrClientError::ParseEvent { source: error })?;
+            return Ok(Some(event));
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ZrClientError {
     Connect {
         addr: String,
@@ -120,6 +204,12 @@ pub enum ZrClientError {
     },
     Decode {
         request: String,
+        source: serde_json::Error,
+    },
+    ReadEvent {
+        source: std::io::Error,
+    },
+    ParseEvent {
         source: serde_json::Error,
     },
     DaemonRefusal(DaemonRefusal),
@@ -166,6 +256,12 @@ impl fmt::Display for ZrClientError {
                     request, source
                 )
             }
+            Self::ReadEvent { source } => {
+                write!(formatter, "failed to read invocation event: {}", source)
+            }
+            Self::ParseEvent { source } => {
+                write!(formatter, "failed to parse invocation event: {}", source)
+            }
             Self::DaemonRefusal(refusal) => {
                 write!(formatter, "daemon refused request: {:?}", refusal)
             }
@@ -204,6 +300,7 @@ mod tests {
         ArgumentDescriptor, ArgumentType, CommandDescriptor, OutputCardinality, OutputDescriptor,
         OutputDisplay,
     };
+    use zacor_protocol::daemon_invoke::{InvocationContext, InvocationMessageLevel};
 
     fn spawn_server(response: serde_json::Value) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -218,6 +315,34 @@ mod tests {
             stream.flush().unwrap();
         });
         addr
+    }
+
+    fn spawn_stream_server(ack: serde_json::Value, events: Vec<serde_json::Value>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(request["request"], "invoke-command");
+            writeln!(stream, "{}", ack).unwrap();
+            for event in events {
+                writeln!(stream, "{}", event).unwrap();
+            }
+            stream.flush().unwrap();
+        });
+        addr
+    }
+
+    fn invoke_request() -> CommandInvocationRequest {
+        CommandInvocationRequest {
+            package: "echo".into(),
+            command: "default".into(),
+            args: std::collections::BTreeMap::from([("text".into(), "hello".into())]),
+            context: InvocationContext { cwd: ".".into() },
+        }
     }
 
     #[test]
@@ -331,5 +456,81 @@ mod tests {
         let error = client.list_packages().unwrap_err();
 
         assert!(matches!(error, ZrClientError::Decode { .. }));
+    }
+
+    #[test]
+    fn invoke_command_stream_decodes_events_in_order() {
+        let addr = spawn_stream_server(
+            serde_json::json!({"ok": true}),
+            vec![
+                serde_json::json!({"type": "output", "record": {"value": "hello"}}),
+                serde_json::json!({"type": "progress", "fraction": 0.5}),
+                serde_json::json!({"type": "message", "level": "info", "text": "running"}),
+                serde_json::json!({"type": "done", "exit_code": 0}),
+            ],
+        );
+        let client = ZrClient::new(addr);
+
+        let mut stream = client.invoke_command(invoke_request()).unwrap();
+
+        assert_eq!(
+            stream.next_event().unwrap(),
+            Some(InvocationEvent::Output {
+                record: serde_json::json!({"value": "hello"})
+            })
+        );
+        assert_eq!(
+            stream.next_event().unwrap(),
+            Some(InvocationEvent::Progress { fraction: 0.5 })
+        );
+        assert_eq!(
+            stream.next_event().unwrap(),
+            Some(InvocationEvent::Message {
+                level: InvocationMessageLevel::Info,
+                text: "running".into(),
+            })
+        );
+        assert_eq!(
+            stream.next_event().unwrap(),
+            Some(InvocationEvent::Done {
+                exit_code: 0,
+                error: None,
+            })
+        );
+        assert_eq!(stream.next_event().unwrap(), None);
+    }
+
+    #[test]
+    fn invoke_command_refusal_before_stream_maps_to_error() {
+        let addr = spawn_stream_server(
+            serde_json::json!({
+                "ok": false,
+                "refusal": {"kind": "package_not_found", "name": "missing"},
+                "error": "package not found: missing"
+            }),
+            Vec::new(),
+        );
+        let client = ZrClient::new(addr);
+
+        let error = client.invoke_command(invoke_request()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ZrClientError::DaemonRefusal(DaemonRefusal::PackageNotFound { name }) if name == "missing"
+        ));
+    }
+
+    #[test]
+    fn malformed_invocation_event_maps_to_parse_error() {
+        let addr = spawn_stream_server(
+            serde_json::json!({"ok": true}),
+            vec![serde_json::json!({"type": "unknown"})],
+        );
+        let client = ZrClient::new(addr);
+        let mut stream = client.invoke_command(invoke_request()).unwrap();
+
+        let error = stream.next_event().unwrap_err();
+
+        assert!(matches!(error, ZrClientError::ParseEvent { .. }));
     }
 }

@@ -10,6 +10,7 @@ use zacor_protocol::DaemonRefusal;
 use super::capability_router::CapabilityRouter;
 use super::catalog;
 use super::dispatch;
+use super::invoke;
 use super::module_cache::LibraryPool;
 use super::service_supervisor::{self, ManagedService};
 use super::{DAEMON_PORT, DaemonControl, DaemonRequest, DaemonResponse};
@@ -36,6 +37,9 @@ pub(super) fn handle_connection(
     }
     if req.request == "invoke-library" {
         return dispatch::handle_library_invoke(reader, stream, req, library_pools, control, home);
+    }
+    if req.request == "invoke-command" {
+        return invoke::handle_command_invoke(stream, req, control, home);
     }
 
     let response = match req.request.as_str() {

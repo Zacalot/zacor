@@ -1,15 +1,20 @@
 use std::collections::HashMap;
 
+mod model;
 mod runtime;
 
 use crate::input::{
     FocusId, HitBehavior, HitRegionId, InputListenerRegistry, KeyboardHandler, PointerHandler,
 };
 use crate::render::{
-    Color, Frame, Layer, PaintContext, Rect, Size, Stroke, SurfaceFallback, SurfaceKind,
+    Color, Frame, Layer, PaintContext, Point, Rect, Size, Stroke, SurfaceFallback, SurfaceKind,
     SurfaceSlotId,
 };
 
+pub use model::{
+    Buffer, BufferId, BufferKind, BufferStore, InterfaceFrame, InterfaceFrameId, View, ViewCursor,
+    ViewId, ViewScroll, ViewStore,
+};
 pub use runtime::{
     HostRuntime, HostTurnResult, InputTurnResult, KeyboardTurnResult, PointerTurnResult,
 };
@@ -139,6 +144,7 @@ impl PaneContent {
 
 pub struct Pane {
     id: PaneId,
+    view: Option<ViewId>,
     content: PaneContent,
     chrome: Option<PaneChrome>,
     focusable: bool,
@@ -149,6 +155,7 @@ impl Pane {
     pub fn new(id: PaneId, content: PaneContent) -> Self {
         Self {
             id,
+            view: None,
             content,
             chrome: None,
             focusable: false,
@@ -166,6 +173,19 @@ impl Pane {
 
     pub fn content_mut(&mut self) -> &mut PaneContent {
         &mut self.content
+    }
+
+    pub fn view(&self) -> Option<ViewId> {
+        self.view
+    }
+
+    pub fn set_view(&mut self, view: Option<ViewId>) {
+        self.view = view;
+    }
+
+    pub fn with_view(mut self, view: ViewId) -> Self {
+        self.view = Some(view);
+        self
     }
 
     pub fn with_chrome(mut self, chrome: PaneChrome) -> Self {
@@ -261,6 +281,9 @@ impl PaneTree {
 }
 
 pub struct InterfaceHost {
+    buffers: BufferStore,
+    views: ViewStore,
+    frame: InterfaceFrame,
     panes: HashMap<PaneId, Pane>,
     tree: PaneTree,
     active_pane: Option<PaneId>,
@@ -270,6 +293,9 @@ pub struct InterfaceHost {
 impl InterfaceHost {
     pub fn new(tree: PaneTree) -> Self {
         Self {
+            buffers: BufferStore::new(),
+            views: ViewStore::new(),
+            frame: InterfaceFrame::default(),
             panes: HashMap::new(),
             tree,
             active_pane: None,
@@ -286,6 +312,51 @@ impl InterfaceHost {
         self.panes.insert(pane.id(), pane)
     }
 
+    pub fn create_buffer(&mut self, kind: BufferKind, name: impl Into<String>) -> BufferId {
+        self.buffers.create(kind, name)
+    }
+
+    pub fn create_buffer_with_text(
+        &mut self,
+        kind: BufferKind,
+        name: impl Into<String>,
+        text: impl Into<String>,
+    ) -> BufferId {
+        self.buffers.create_with_text(kind, name, text)
+    }
+
+    pub fn buffer(&self, id: BufferId) -> Option<&Buffer> {
+        self.buffers.get(id)
+    }
+
+    pub fn buffer_mut(&mut self, id: BufferId) -> Option<&mut Buffer> {
+        self.buffers.get_mut(id)
+    }
+
+    pub fn append_to_buffer(&mut self, id: BufferId, text: impl AsRef<str>) -> bool {
+        self.buffers.append_text(id, text)
+    }
+
+    pub fn create_view(&mut self, buffer: BufferId) -> ViewId {
+        self.views.create(buffer)
+    }
+
+    pub fn view(&self, id: ViewId) -> Option<&View> {
+        self.views.get(id)
+    }
+
+    pub fn view_mut(&mut self, id: ViewId) -> Option<&mut View> {
+        self.views.get_mut(id)
+    }
+
+    pub fn set_pane_view(&mut self, pane: PaneId, view: Option<ViewId>) -> bool {
+        let Some(pane) = self.panes.get_mut(&pane) else {
+            return false;
+        };
+        pane.set_view(view);
+        true
+    }
+
     pub fn pane(&self, id: PaneId) -> Option<&Pane> {
         self.panes.get(&id)
     }
@@ -296,10 +367,20 @@ impl InterfaceHost {
 
     pub fn select_pane(&mut self, id: PaneId) {
         self.active_pane = Some(id);
+        let selected_view = self.panes.get(&id).and_then(Pane::view);
+        self.frame.set_selected_view(selected_view);
     }
 
     pub fn active_pane(&self) -> Option<PaneId> {
         self.active_pane
+    }
+
+    pub fn interface_frame(&self) -> &InterfaceFrame {
+        &self.frame
+    }
+
+    pub fn selected_view(&self) -> Option<ViewId> {
+        self.frame.selected_view()
     }
 
     pub fn build_snapshot(&self, size: Size) -> HostSnapshot {
@@ -341,9 +422,11 @@ impl InterfaceHost {
                         paint.stroke_rect(pane_rect.rect, stroke);
                     }
                     pane.content.paint(pane_rect.rect, paint);
+                    self.paint_pane_view(pane, pane_rect.rect, paint);
                 });
             } else {
                 pane.content.paint(pane_rect.rect, &mut paint);
+                self.paint_pane_view(pane, pane_rect.rect, &mut paint);
             }
 
             pane.content
@@ -355,6 +438,22 @@ impl InterfaceHost {
             listeners,
             targets,
         }
+    }
+
+    fn paint_pane_view(&self, pane: &Pane, rect: Rect, paint: &mut PaintContext) {
+        let Some(view_id) = pane.view() else {
+            return;
+        };
+        let Some(view) = self.views.get(view_id) else {
+            return;
+        };
+        let Some(buffer) = self.buffers.get(view.buffer()) else {
+            return;
+        };
+
+        paint.with_clip(rect, |paint| {
+            paint_buffer_lines(buffer, view, rect, paint);
+        });
     }
 }
 
@@ -442,6 +541,23 @@ fn layout_split(split: &SplitNode, bounds: Rect, panes: &mut Vec<LaidOutPane>) {
         };
 
         layout_node(child, rect, panes);
+    }
+}
+
+fn paint_buffer_lines(buffer: &Buffer, view: &View, rect: Rect, paint: &mut PaintContext) {
+    let line_height = 16.0;
+    let max_lines = (rect.size.height / line_height).ceil().max(0.0) as usize;
+    let start_line = view.scroll().line;
+    let x = rect.origin.x + 4.0;
+    let mut y = rect.origin.y + line_height;
+
+    for line in buffer.lines().skip(start_line).take(max_lines) {
+        paint.text(
+            Point::new(x, y),
+            line.to_string(),
+            crate::render::TextStyle::new(Color::WHITE, 12.0),
+        );
+        y += line_height;
     }
 }
 
@@ -717,6 +833,51 @@ mod tests {
     }
 
     #[test]
+    fn pane_can_host_view_over_buffer() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello");
+        let view = host.create_view(buffer);
+
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        assert_eq!(host.pane(LEFT).unwrap().view(), Some(view));
+        assert_eq!(host.view(view).unwrap().buffer(), buffer);
+    }
+
+    #[test]
+    fn build_snapshot_paints_hosted_buffer_text() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello\nworld");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        let snapshot = host.build_snapshot(Size::new(80.0, 40.0));
+
+        let text_items = snapshot
+            .frame
+            .scene
+            .items()
+            .iter()
+            .filter_map(|item| match &item.primitive {
+                crate::render::Primitive::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(text_items, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn hosted_view_with_missing_buffer_is_ignored() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let view = host.create_view(BufferId(999));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        let snapshot = host.build_snapshot(Size::new(80.0, 40.0));
+
+        assert!(snapshot.frame.scene.items().is_empty());
+    }
+
+    #[test]
     fn build_snapshot_registers_keyboard_handlers_only_for_focusable_panes() {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
         let mut content = PaneContent::empty();
@@ -746,6 +907,19 @@ mod tests {
         let _second = host.build_snapshot(Size::new(30.0, 15.0));
 
         assert_eq!(host.active_pane(), Some(LEFT));
+    }
+
+    #[test]
+    fn selecting_pane_selects_hosted_view() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer(BufferKind::Log, "log");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        host.select_pane(LEFT);
+
+        assert_eq!(host.active_pane(), Some(LEFT));
+        assert_eq!(host.selected_view(), Some(view));
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod capability_router;
 mod catalog;
 mod dispatch;
 mod idle;
+mod invoke;
 mod module_cache;
 mod protocol;
 mod server;

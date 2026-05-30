@@ -7287,6 +7287,7 @@ dependencies = [
  "windows-sys 0.52.0",
  "zacor-host",
  "zacor-package",
+ "zacor-protocol",
  "zr-dispatch",
 ]
 
@@ -7342,6 +7343,7 @@ dependencies = [
  "zacor-host",
  "zacor-package",
  "zacor-protocol",
+ "zr-dispatch",
 ]
 
 [[package]]

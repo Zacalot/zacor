@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use zacor_host::protocol::DaemonRefusal;
+use zacor_protocol::daemon_invoke::CommandInvocationRequest;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct DaemonRequest {
@@ -25,6 +26,8 @@ pub(super) struct DaemonRequest {
     pub(super) op: Option<String>,
     #[serde(default)]
     pub(super) params: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(super) invoke: Option<CommandInvocationRequest>,
 }
 
 #[derive(Debug, Serialize)]

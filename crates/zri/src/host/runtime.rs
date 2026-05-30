@@ -183,7 +183,9 @@ pub struct KeyboardTurnResult {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use crate::host::{Axis, Pane, PaneContent, PaneId, PaneNode, PaneTree, SplitId, SplitNode};
+    use crate::host::{
+        Axis, BufferKind, Pane, PaneContent, PaneId, PaneNode, PaneTree, SplitId, SplitNode,
+    };
     use crate::input::{
         FocusId, HitRegionId, Key, KeyDownEvent, KeyLocation, KeyboardDispatchResult,
         KeyboardEvent, Keystroke, Modifiers, PointerDispatchResult,
@@ -286,6 +288,29 @@ mod tests {
         assert_eq!(result.plan.focus_request, Some(FocusId(LEFT.0)));
         assert_eq!(runtime.focus_state().focused(), Some(FocusId(LEFT.0)));
         assert_eq!(runtime.host().active_pane(), Some(LEFT));
+    }
+
+    #[test]
+    fn pointer_turn_selects_hosted_view_for_focused_pane() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer(BufferKind::Text, "scratch");
+        let view = host.create_view(buffer);
+        host.insert_pane(
+            Pane::new(LEFT, PaneContent::empty())
+                .with_focusable(true)
+                .with_view(view),
+        );
+        let mut runtime = HostRuntime::new(host, Size::new(20.0, 10.0));
+
+        let result = runtime.handle_pointer(pointer_event(
+            5.0,
+            5.0,
+            crate::input::PointerEventKind::Down,
+        ));
+
+        assert_eq!(result.plan.focus_request, Some(FocusId(LEFT.0)));
+        assert_eq!(runtime.host().active_pane(), Some(LEFT));
+        assert_eq!(runtime.host().selected_view(), Some(view));
     }
 
     #[test]

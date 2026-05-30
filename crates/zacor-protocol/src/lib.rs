@@ -10,6 +10,7 @@
 //! - CAPABILITY_RES: runtime -> module, capability response
 
 pub mod daemon_catalog;
+pub mod daemon_invoke;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

@@ -17,9 +17,10 @@ mod providers;
 mod render;
 
 pub use dispatch::{
-    InvocationEvent, InvocationMessageLevel, OutputMode, build_clap_command, invoke_local,
-    invoke_local_with_events, run,
+    InvocationEvent, InvocationMessageLevel, OutputMode, build_clap_command,
+    invoke_in_process_with_events_at_cwd, invoke_local, invoke_local_with_events, run,
 };
+pub use providers::build_default_registry;
 
 pub(crate) fn resolve_peer_binary(name: &str) -> std::path::PathBuf {
     let env_name = format!("CARGO_BIN_EXE_{name}");
