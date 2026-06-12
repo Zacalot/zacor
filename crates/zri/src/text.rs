@@ -4,6 +4,13 @@ use crate::render::{Color, Coord, Point, Size, TextStyle};
 
 const DEFAULT_LINE_HEIGHT_SCALE: f32 = 1.2;
 
+/// The line-box height the kernel lays text out with for a given style. This
+/// is the same value `layout_line` shapes against, so paint paths that advance
+/// by it can never diverge from shaped output.
+pub fn line_height(style: TextStyle) -> Coord {
+    style.size * DEFAULT_LINE_HEIGHT_SCALE
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GlyphKey(cosmic_text::CacheKey);
 
@@ -127,7 +134,7 @@ impl Default for TextSystem {
 }
 
 fn buffer_metrics(style: TextStyle) -> Metrics {
-    Metrics::new(style.size, style.size * DEFAULT_LINE_HEIGHT_SCALE)
+    Metrics::new(style.size, line_height(style))
 }
 
 fn layout_glyph(glyph: &LayoutGlyph, offset: (f32, f32), color: Color) -> LaidOutGlyph {
@@ -165,6 +172,15 @@ mod tests {
 
         assert!(size.width > 0.0);
         assert!(size.height > 0.0);
+    }
+
+    #[test]
+    fn line_height_matches_layout_metrics() {
+        let style = TextStyle::new(Color::WHITE, 12.0);
+        let mut text = TextSystem::new();
+        let measured = text.measure_line("hi", style);
+
+        assert_eq!(measured.height, line_height(style));
     }
 
     #[test]

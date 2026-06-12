@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event::{ElementState, StartCause, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use zri::function::{FunctionName, FunctionRegistry, FunctionRouter};
@@ -20,6 +21,9 @@ use zri::render::{
 };
 
 const ROOT_PANE: PaneId = PaneId(1);
+
+/// Cursor blink half-period (the Emacs `blink-cursor-interval` default).
+const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// User event posted by the ingress waker to drain deferred events at the
 /// turn boundary. The wake is coalesced inside `ZrIngress`.
@@ -45,6 +49,9 @@ struct ZriApp {
     ingress: ZrIngress,
     pointer_position: Point,
     modifiers: zri::input::Modifiers,
+    /// Next cursor blink-phase flip; pushed forward by keyboard activity so
+    /// the cursor stays solid while typing.
+    next_blink: Instant,
 }
 
 impl ZriApp {
@@ -56,6 +63,7 @@ impl ZriApp {
             ingress,
             pointer_position: Point::new(0.0, 0.0),
             modifiers: zri::input::Modifiers::default(),
+            next_blink: Instant::now() + BLINK_INTERVAL,
         }
     }
 }
@@ -66,6 +74,30 @@ struct NativeWindow {
 }
 
 impl ApplicationHandler<ZriWake> for ZriApp {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let StartCause::ResumeTimeReached { .. } = cause {
+            if let Some(runtime) = self.runtime.as_mut() {
+                runtime.toggle_cursor_blink();
+            }
+            self.next_blink = Instant::now() + BLINK_INTERVAL;
+            self.request_redraw_if_needed();
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // The blink timer runs only while a cursor would paint; otherwise the
+        // loop stays fully event-driven.
+        let blinking = self
+            .runtime
+            .as_ref()
+            .is_some_and(HostRuntime::has_active_cursor);
+        event_loop.set_control_flow(if blinking {
+            ControlFlow::WaitUntil(self.next_blink)
+        } else {
+            ControlFlow::Wait
+        });
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.native_window.is_some() {
             return;
@@ -138,6 +170,9 @@ impl ApplicationHandler<ZriWake> for ZriApp {
                 if let Some(runtime) = self.runtime.as_mut() {
                     runtime.handle_keyboard(event);
                 }
+                // The runtime resets the blink phase to visible; restart the
+                // half-period so the cursor stays solid while typing.
+                self.next_blink = Instant::now() + BLINK_INTERVAL;
                 self.request_redraw_if_needed();
             }
             WindowEvent::MouseInput { state, button, .. } => {

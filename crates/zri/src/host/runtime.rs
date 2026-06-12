@@ -14,6 +14,7 @@ use crate::input::{
 };
 use crate::keymap::{ActiveKeymap, BindingChord, Keymap, KeymapResolution, KeymapResolver};
 use crate::render::{Frame, Size};
+use crate::text::TextSystem;
 
 use super::{HostSnapshot, InterfaceHost, PaneId, TextInputResult, apply_keyboard_event};
 
@@ -27,6 +28,10 @@ pub struct HostRuntime {
     host: InterfaceHost,
     size: Size,
     snapshot: HostSnapshot,
+    /// The text kernel handle painting measures through; the runtime owns the
+    /// process's one instance and hands it to snapshot builds (the renderer
+    /// keeps its own for glyph rasterization).
+    text: TextSystem,
     pointer_state: PointerState,
     focus_state: FocusState,
     /// Caller-ordered active keymaps; the first layer that matches or goes
@@ -44,11 +49,13 @@ pub struct HostRuntime {
 
 impl HostRuntime {
     pub fn new(host: InterfaceHost, size: Size) -> Self {
-        let snapshot = host.build_snapshot(size);
+        let mut text = TextSystem::new();
+        let snapshot = host.build_snapshot(size, &mut text);
         Self {
             host,
             size,
             snapshot,
+            text,
             pointer_state: PointerState::new(),
             focus_state: FocusState::new(),
             keymaps: Vec::new(),
@@ -78,6 +85,28 @@ impl HostRuntime {
         self.functions = Some(functions);
     }
 
+    /// Cursor blink phase, driven by the app shell's timer. The hidden phase
+    /// skips cursor painting; key-down turns and selection changes force the
+    /// cursor visible again (Emacs pre-command behavior).
+    pub fn set_cursor_blink_visible(&mut self, visible: bool) {
+        if self.host.cursor_visible() == visible {
+            return;
+        }
+        self.host.set_cursor_visible(visible);
+        self.invalidate();
+        self.request_redraw();
+    }
+
+    pub fn toggle_cursor_blink(&mut self) {
+        self.set_cursor_blink_visible(!self.host.cursor_visible());
+    }
+
+    /// Whether a cursor would currently paint (some pane is selected with a
+    /// hosted view); the app shell gates its blink timer on this.
+    pub fn has_active_cursor(&self) -> bool {
+        self.host.selected_view().is_some()
+    }
+
     /// The single transactional pane-selection entry point. Focus state is the
     /// selection authority; the host's active pane is a follower updated here
     /// and in `apply_focus` only, never independently.
@@ -103,6 +132,7 @@ impl HostRuntime {
         // A pending key sequence was typed against the previous focus context
         // and must not resolve in the new one (Zed precedent).
         self.resolver.clear_pending();
+        self.host.set_cursor_visible(true);
         self.invalidate();
         self.request_redraw();
         transition
@@ -116,6 +146,7 @@ impl HostRuntime {
             self.host.set_active_pane(Some(pane_id));
         }
         self.resolver.clear_pending();
+        self.set_cursor_blink_visible(true);
         transition
     }
 
@@ -171,7 +202,7 @@ impl HostRuntime {
             return false;
         }
 
-        self.snapshot = self.host.build_snapshot(self.size);
+        self.snapshot = self.host.build_snapshot(self.size, &mut self.text);
         self.dirty = false;
         true
     }
@@ -265,6 +296,11 @@ impl HostRuntime {
     /// `FunctionRouter`; their effects are applied buffered-then-committed
     /// with target revalidation.
     pub fn handle_keyboard(&mut self, event: KeyboardEvent) -> KeyboardTurnResult {
+        // Typing holds the cursor solid: reset the blink phase before the
+        // snapshot for this turn is (re)built.
+        if matches!(event, KeyboardEvent::KeyDown(_)) {
+            self.set_cursor_blink_visible(true);
+        }
         let snapshot_rebuilt = self.rebuild_snapshot_if_dirty();
         let plan = plan_keyboard_dispatch(&self.focus_state, event.clone());
         let dispatch = dispatch_keyboard(&self.snapshot.listeners, &plan);
@@ -1208,5 +1244,98 @@ mod tests {
         assert_eq!(drains, 4);
         assert_eq!(pointer_turns, drains);
         assert_eq!(runtime.host().buffer(buffer).unwrap().text().len(), total);
+    }
+
+    fn cursor_fill(frame: &Frame) -> Option<crate::render::Rect> {
+        frame
+            .scene
+            .items()
+            .iter()
+            .find_map(|item| match item.primitive {
+                crate::render::Primitive::FillRect { rect, .. } => Some(rect),
+                _ => None,
+            })
+    }
+
+    fn runtime_with_text_view() -> HostRuntime {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer(BufferKind::Text, "scratch");
+        let view = host.create_view(buffer);
+        host.insert_pane(
+            Pane::new(LEFT, PaneContent::empty())
+                .with_focusable(true)
+                .with_view(view),
+        );
+        let mut runtime = HostRuntime::new(host, Size::new(200.0, 40.0));
+        runtime.select_pane(LEFT);
+        runtime.rebuild_snapshot_if_dirty();
+        runtime
+    }
+
+    fn key_a() -> KeyboardEvent {
+        KeyboardEvent::KeyDown(KeyDownEvent {
+            keystroke: Keystroke {
+                key: Key::Character("a".to_string()),
+                text: Some("a".to_string()),
+                modifiers: Modifiers::default(),
+                location: KeyLocation::Standard,
+            },
+            repeat: false,
+            prefer_text: false,
+        })
+    }
+
+    #[test]
+    fn typing_advances_painted_cursor() {
+        let mut runtime = runtime_with_text_view();
+        let before = cursor_fill(runtime.frame()).expect("cursor paints for the selected view");
+
+        runtime.handle_keyboard(key_a());
+        runtime.rebuild_snapshot_if_dirty();
+
+        let after = cursor_fill(runtime.frame()).expect("cursor still paints after typing");
+        assert!(after.origin.x > before.origin.x);
+    }
+
+    #[test]
+    fn keyboard_turn_resets_cursor_blink_phase() {
+        let mut runtime = runtime_with_text_view();
+        runtime.set_cursor_blink_visible(false);
+        runtime.rebuild_snapshot_if_dirty();
+        assert!(cursor_fill(runtime.frame()).is_none());
+
+        runtime.handle_keyboard(key_a());
+        runtime.rebuild_snapshot_if_dirty();
+
+        assert!(cursor_fill(runtime.frame()).is_some());
+    }
+
+    #[test]
+    fn select_pane_resets_cursor_blink_phase() {
+        let mut host = InterfaceHost::new(horizontal_tree());
+        let left_buffer = host.create_buffer(BufferKind::Text, "left");
+        let left_view = host.create_view(left_buffer);
+        let right_buffer = host.create_buffer(BufferKind::Text, "right");
+        let right_view = host.create_view(right_buffer);
+        host.insert_pane(
+            Pane::new(LEFT, PaneContent::empty())
+                .with_focusable(true)
+                .with_view(left_view),
+        );
+        host.insert_pane(
+            Pane::new(RIGHT, PaneContent::empty())
+                .with_focusable(true)
+                .with_view(right_view),
+        );
+        let mut runtime = HostRuntime::new(host, Size::new(200.0, 40.0));
+        runtime.select_pane(LEFT);
+        runtime.set_cursor_blink_visible(false);
+        runtime.rebuild_snapshot_if_dirty();
+        assert!(cursor_fill(runtime.frame()).is_none());
+
+        runtime.select_pane(RIGHT);
+        runtime.rebuild_snapshot_if_dirty();
+
+        assert!(cursor_fill(runtime.frame()).is_some());
     }
 }

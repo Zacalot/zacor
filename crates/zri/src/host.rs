@@ -8,9 +8,17 @@ use crate::input::{
     FocusId, HitBehavior, HitRegionId, InputListenerRegistry, KeyboardHandler, PointerHandler,
 };
 use crate::render::{
-    Color, Frame, Layer, PaintContext, Point, Rect, Size, Stroke, SurfaceFallback, SurfaceKind,
-    SurfaceSlotId,
+    Color, Coord, Frame, Layer, PaintContext, Point, Rect, Size, Stroke, SurfaceFallback,
+    SurfaceKind, SurfaceSlotId, TextStyle,
 };
+use crate::text::TextSystem;
+
+/// Buffer text presentation until theming exists.
+const BUFFER_TEXT_STYLE: TextStyle = TextStyle::new(Color::WHITE, 12.0);
+const TEXT_INSET_X: Coord = 4.0;
+/// Width reference for the cursor cell when no character sits under it
+/// (end of line): shaped trailing-space advances are unreliable, an em is not.
+const CURSOR_EM_CELL: &str = "m";
 
 pub use model::{
     Buffer, BufferId, BufferKind, BufferStore, InterfaceFrame, InterfaceFrameId, View, ViewCursor,
@@ -311,6 +319,8 @@ pub struct InterfaceHost {
     // (overlays, prompt views) can allocate from the same namespaces.
     next_hit_region_id: u64,
     next_focus_id: u64,
+    /// Cursor blink phase; painting skips the cursor while hidden.
+    cursor_visible: bool,
 }
 
 impl InterfaceHost {
@@ -325,6 +335,7 @@ impl InterfaceHost {
             background: None,
             next_hit_region_id: 1,
             next_focus_id: 1,
+            cursor_visible: true,
         }
     }
 
@@ -426,6 +437,16 @@ impl InterfaceHost {
         self.active_pane
     }
 
+    /// Follower setter for the cursor blink phase. Owned by `HostRuntime`'s
+    /// blink API, like `set_active_pane` is owned by its selection path.
+    fn set_cursor_visible(&mut self, visible: bool) {
+        self.cursor_visible = visible;
+    }
+
+    fn cursor_visible(&self) -> bool {
+        self.cursor_visible
+    }
+
     pub fn interface_frame(&self) -> &InterfaceFrame {
         &self.frame
     }
@@ -438,7 +459,7 @@ impl InterfaceHost {
             .and_then(Pane::view)
     }
 
-    pub fn build_snapshot(&self, size: Size) -> HostSnapshot {
+    pub fn build_snapshot(&self, size: Size, text: &mut TextSystem) -> HostSnapshot {
         let bounds = Rect::from_xywh(0.0, 0.0, size.width, size.height);
         let laid_out = self.tree.layout(bounds);
         let mut paint = PaintContext::new();
@@ -479,11 +500,11 @@ impl InterfaceHost {
                         paint.stroke_rect(pane_rect.rect, stroke);
                     }
                     pane.content.paint(pane_rect.rect, paint);
-                    self.paint_pane_view(pane, pane_rect.rect, paint);
+                    self.paint_pane_view(pane, pane_rect.rect, text, paint);
                 });
             } else {
                 pane.content.paint(pane_rect.rect, &mut paint);
-                self.paint_pane_view(pane, pane_rect.rect, &mut paint);
+                self.paint_pane_view(pane, pane_rect.rect, text, &mut paint);
             }
 
             pane.content
@@ -497,7 +518,13 @@ impl InterfaceHost {
         }
     }
 
-    fn paint_pane_view(&self, pane: &Pane, rect: Rect, paint: &mut PaintContext) {
+    fn paint_pane_view(
+        &self,
+        pane: &Pane,
+        rect: Rect,
+        text: &mut TextSystem,
+        paint: &mut PaintContext,
+    ) {
         let Some(view_id) = pane.view() else {
             return;
         };
@@ -510,6 +537,18 @@ impl InterfaceHost {
 
         paint.with_clip(rect, |paint| {
             paint_buffer_lines(buffer, view, rect, paint);
+            // The cursor renders only for the focused pane (the active pane
+            // follows the runtime's focus authority) and only in the visible
+            // blink phase.
+            if self.cursor_visible && self.active_pane == Some(pane.id()) {
+                let background = pane
+                    .chrome
+                    .as_ref()
+                    .and_then(|chrome| chrome.background)
+                    .or(self.background)
+                    .unwrap_or(Color::BLACK);
+                paint_view_cursor(buffer, view, rect, background, text, paint);
+            }
         });
     }
 }
@@ -588,20 +627,78 @@ fn layout_split(split: &SplitNode, bounds: Rect, panes: &mut Vec<LaidOutPane>) {
     }
 }
 
+fn visible_line_budget(rect: Rect, line_height: Coord) -> usize {
+    (rect.size.height / line_height).ceil().max(0.0) as usize
+}
+
 fn paint_buffer_lines(buffer: &Buffer, view: &View, rect: Rect, paint: &mut PaintContext) {
-    let line_height = 16.0;
-    let max_lines = (rect.size.height / line_height).ceil().max(0.0) as usize;
+    // `Primitive::Text.position` is the top of the line box (the GPU path
+    // hands it straight to `TextSystem::layout_line`), so rows advance from
+    // the pane top by the kernel's line height.
+    let line_height = crate::text::line_height(BUFFER_TEXT_STYLE);
+    let max_lines = visible_line_budget(rect, line_height);
     let start_line = view.scroll().line;
-    let x = rect.origin.x + 4.0;
-    let mut y = rect.origin.y + line_height;
+    let x = rect.origin.x + TEXT_INSET_X;
+    let mut y = rect.origin.y;
 
     for line in buffer.lines().skip(start_line).take(max_lines) {
+        paint.text(Point::new(x, y), line.to_string(), BUFFER_TEXT_STYLE);
+        y += line_height;
+    }
+}
+
+/// Paint the view's cursor as an opaque block over the character cell, with
+/// the covered character re-drawn in the background color (Emacs
+/// inverse-video). The overlay glyph is shaped alone, so kerning context can
+/// shift it sub-pixel relative to the full line; the single-line kernel scope
+/// accepts this.
+fn paint_view_cursor(
+    buffer: &Buffer,
+    view: &View,
+    rect: Rect,
+    background: Color,
+    text: &mut TextSystem,
+    paint: &mut PaintContext,
+) {
+    let line_height = crate::text::line_height(BUFFER_TEXT_STYLE);
+    let cursor = view.cursor();
+    let scroll = view.scroll();
+    if cursor.line < scroll.line {
+        return;
+    }
+    let row = cursor.line - scroll.line;
+    if row >= visible_line_budget(rect, line_height) {
+        return;
+    }
+
+    // A cursor on a trailing empty line has no backing `lines()` entry.
+    let line = buffer.lines().nth(cursor.line).unwrap_or("");
+    let column = cursor.column.min(line.chars().count());
+    let prefix: String = line.chars().take(column).collect();
+    let prefix_width = text.measure_line(&prefix, BUFFER_TEXT_STYLE).width;
+
+    let x = rect.origin.x + TEXT_INSET_X + prefix_width;
+    let y = rect.origin.y + row as Coord * line_height;
+    let covered = line.chars().nth(column);
+    let width = match covered {
+        Some(covered) => {
+            let mut with_covered = prefix;
+            with_covered.push(covered);
+            text.measure_line(&with_covered, BUFFER_TEXT_STYLE).width - prefix_width
+        }
+        None => text.measure_line(CURSOR_EM_CELL, BUFFER_TEXT_STYLE).width,
+    };
+
+    paint.fill_rect(
+        Rect::from_xywh(x, y, width, line_height),
+        BUFFER_TEXT_STYLE.color,
+    );
+    if let Some(covered) = covered {
         paint.text(
             Point::new(x, y),
-            line.to_string(),
-            crate::render::TextStyle::new(Color::WHITE, 12.0),
+            covered.to_string(),
+            TextStyle::new(background, BUFFER_TEXT_STYLE.size),
         );
-        y += line_height;
     }
 }
 
@@ -630,6 +727,40 @@ mod tests {
             )
             .unwrap(),
         ))
+    }
+
+    fn snapshot(host: &InterfaceHost, size: Size) -> HostSnapshot {
+        host.build_snapshot(size, &mut TextSystem::new())
+    }
+
+    fn fill_rects(snapshot: &HostSnapshot) -> Vec<Rect> {
+        snapshot
+            .frame
+            .scene
+            .items()
+            .iter()
+            .filter_map(|item| match item.primitive {
+                crate::render::Primitive::FillRect { rect, .. } => Some(rect),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn text_items(snapshot: &HostSnapshot) -> Vec<(Point, String, TextStyle)> {
+        snapshot
+            .frame
+            .scene
+            .items()
+            .iter()
+            .filter_map(|item| match &item.primitive {
+                crate::render::Primitive::Text {
+                    position,
+                    text,
+                    style,
+                } => Some((*position, text.clone(), *style)),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -762,7 +893,7 @@ mod tests {
                 }
             }));
 
-        let snapshot = host.build_snapshot(Size::new(100.0, 20.0));
+        let snapshot = snapshot(&host, Size::new(100.0, 20.0));
 
         assert_eq!(snapshot.frame.size, Size::new(100.0, 20.0));
         assert_eq!(snapshot.targets.pane_for_hit_region(left_hit), Some(LEFT));
@@ -777,7 +908,7 @@ mod tests {
                 .with_chrome(PaneChrome::new().with_background(Color::WHITE)),
         );
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         assert_eq!(snapshot.frame.scene.items().len(), 1);
     }
@@ -789,7 +920,7 @@ mod tests {
             Pane::new(LEFT, PaneContent::empty()).with_hit_behavior(HitBehavior::BlockPointer),
         );
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         assert_eq!(snapshot.frame.hit_regions.len(), 1);
         assert_eq!(
@@ -807,7 +938,7 @@ mod tests {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         assert_eq!(snapshot.frame.focus_regions.len(), 1);
         assert_eq!(
@@ -821,7 +952,7 @@ mod tests {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         assert!(snapshot.frame.focus_regions.is_empty());
     }
@@ -832,7 +963,7 @@ mod tests {
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
         host.insert_pane(Pane::new(RIGHT, PaneContent::empty()));
 
-        let snapshot = host.build_snapshot(Size::new(100.0, 20.0));
+        let snapshot = snapshot(&host, Size::new(100.0, 20.0));
 
         assert_eq!(
             snapshot
@@ -866,7 +997,7 @@ mod tests {
             }),
         ));
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         assert_eq!(snapshot.frame.scene.items().len(), 1);
         assert_eq!(
@@ -899,7 +1030,7 @@ mod tests {
         let view = host.create_view(buffer);
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
 
-        let snapshot = host.build_snapshot(Size::new(80.0, 40.0));
+        let snapshot = snapshot(&host, Size::new(80.0, 40.0));
 
         let text_items = snapshot
             .frame
@@ -920,7 +1051,7 @@ mod tests {
         let view = host.create_view(BufferId(999));
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
 
-        let snapshot = host.build_snapshot(Size::new(80.0, 40.0));
+        let snapshot = snapshot(&host, Size::new(80.0, 40.0));
 
         assert!(snapshot.frame.scene.items().is_empty());
     }
@@ -932,7 +1063,7 @@ mod tests {
         content.on_keyboard(Arc::new(|_| KeyboardDispatchResult::ignored()));
         host.insert_pane(Pane::new(LEFT, content));
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         // An unfocusable pane has no focus identity at all, so no keyboard
         // handlers can be registered for it.
@@ -946,8 +1077,8 @@ mod tests {
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
         host.set_active_pane(Some(LEFT));
 
-        let _first = host.build_snapshot(Size::new(20.0, 10.0));
-        let _second = host.build_snapshot(Size::new(30.0, 15.0));
+        let _first = snapshot(&host, Size::new(20.0, 10.0));
+        let _second = snapshot(&host, Size::new(30.0, 15.0));
 
         assert_eq!(host.active_pane(), Some(LEFT));
     }
@@ -1014,7 +1145,7 @@ mod tests {
             }));
         }
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
         let keyboard_handlers = snapshot.listeners.keyboard.handlers_for(focus_id).unwrap();
         let plan = crate::input::KeyboardDispatchPlan {
             event: KeyboardEvent::KeyDown(KeyDownEvent {
@@ -1063,8 +1194,8 @@ mod tests {
         assert_ne!(left_hit, right_hit);
         assert_ne!(left_focus, right_focus);
 
-        let _first = host.build_snapshot(Size::new(100.0, 20.0));
-        let second = host.build_snapshot(Size::new(100.0, 20.0));
+        let _first = snapshot(&host, Size::new(100.0, 20.0));
+        let second = snapshot(&host, Size::new(100.0, 20.0));
 
         assert_eq!(host.pane_hit_region_id(LEFT), Some(left_hit));
         assert_eq!(host.pane_focus_id(RIGHT), Some(right_focus));
@@ -1092,7 +1223,7 @@ mod tests {
         let stale_focus = host.pane_focus_id(LEFT).unwrap();
 
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
 
         assert_ne!(host.pane_hit_region_id(LEFT), Some(stale_hit));
         assert_eq!(snapshot.targets.pane_for_hit_region(stale_hit), None);
@@ -1112,8 +1243,137 @@ mod tests {
         assert_ne!(Some(overlay_hit), host.pane_hit_region_id(LEFT));
         assert_ne!(Some(overlay_focus), host.pane_focus_id(LEFT));
 
-        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        let snapshot = snapshot(&host, Size::new(20.0, 10.0));
         assert_eq!(snapshot.targets.pane_for_hit_region(overlay_hit), None);
         assert_eq!(snapshot.targets.pane_for_focus_region(overlay_focus), None);
+    }
+
+    #[test]
+    fn buffer_lines_lay_out_with_kernel_line_height() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello\nworld");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        let snap = snapshot(&host, Size::new(80.0, 40.0));
+
+        let line_height = crate::text::line_height(BUFFER_TEXT_STYLE);
+        let texts = text_items(&snap);
+        assert_eq!(texts.len(), 2);
+        assert_eq!(texts[0].0, Point::new(TEXT_INSET_X, 0.0));
+        assert_eq!(texts[1].0, Point::new(TEXT_INSET_X, line_height));
+        assert_eq!(texts[0].2, BUFFER_TEXT_STYLE);
+    }
+
+    #[test]
+    fn focused_pane_paints_block_cursor_at_measured_column() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello");
+        let view = host.create_view(buffer);
+        host.view_mut(view)
+            .unwrap()
+            .set_cursor(ViewCursor { line: 0, column: 3 });
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+        host.set_active_pane(Some(LEFT));
+
+        let snap = snapshot(&host, Size::new(200.0, 40.0));
+
+        let mut text = TextSystem::new();
+        let line_height = crate::text::line_height(BUFFER_TEXT_STYLE);
+        let prefix_width = text.measure_line("hel", BUFFER_TEXT_STYLE).width;
+        let advance = text.measure_line("hell", BUFFER_TEXT_STYLE).width - prefix_width;
+
+        let fills = fill_rects(&snap);
+        assert_eq!(
+            fills,
+            vec![Rect::from_xywh(
+                TEXT_INSET_X + prefix_width,
+                0.0,
+                advance,
+                line_height
+            )]
+        );
+
+        // The covered character repaints over the block in the background
+        // color (inverse video); no chrome/host background means black.
+        let texts = text_items(&snap);
+        let overlay = texts.last().unwrap();
+        assert_eq!(overlay.1, "l");
+        assert_eq!(overlay.0, Point::new(TEXT_INSET_X + prefix_width, 0.0));
+        assert_eq!(
+            overlay.2,
+            TextStyle::new(Color::BLACK, BUFFER_TEXT_STYLE.size)
+        );
+    }
+
+    #[test]
+    fn cursor_at_line_end_paints_em_cell_without_overlay_glyph() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hi");
+        let view = host.create_view(buffer);
+        host.view_mut(view)
+            .unwrap()
+            .set_cursor(ViewCursor { line: 0, column: 2 });
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+        host.set_active_pane(Some(LEFT));
+
+        let snap = snapshot(&host, Size::new(200.0, 40.0));
+
+        let mut text = TextSystem::new();
+        let em_width = text.measure_line(CURSOR_EM_CELL, BUFFER_TEXT_STYLE).width;
+        let fills = fill_rects(&snap);
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].size.width, em_width);
+        // Only the buffer line itself; no inverse-video overlay glyph.
+        assert_eq!(text_items(&snap).len(), 1);
+    }
+
+    #[test]
+    fn unfocused_pane_paints_no_cursor() {
+        let mut host = InterfaceHost::new(horizontal_tree());
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+        host.insert_pane(Pane::new(RIGHT, PaneContent::empty()));
+
+        // No active pane at all.
+        assert!(fill_rects(&snapshot(&host, Size::new(200.0, 40.0))).is_empty());
+
+        // A different pane is active.
+        host.set_active_pane(Some(RIGHT));
+        assert!(fill_rects(&snapshot(&host, Size::new(200.0, 40.0))).is_empty());
+    }
+
+    #[test]
+    fn cursor_scrolled_out_of_view_is_not_painted() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "a\nb\nc");
+        let view = host.create_view(buffer);
+        host.view_mut(view)
+            .unwrap()
+            .set_scroll(ViewScroll { line: 2, column: 0 });
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+        host.set_active_pane(Some(LEFT));
+
+        // Cursor stays at (0, 0), which is above the scrolled window.
+        assert!(fill_rects(&snapshot(&host, Size::new(200.0, 40.0))).is_empty());
+    }
+
+    #[test]
+    fn cursor_hidden_blink_phase_paints_no_cursor() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+        host.set_active_pane(Some(LEFT));
+        host.set_cursor_visible(false);
+
+        assert!(fill_rects(&snapshot(&host, Size::new(200.0, 40.0))).is_empty());
+
+        host.set_cursor_visible(true);
+        assert_eq!(
+            fill_rects(&snapshot(&host, Size::new(200.0, 40.0))).len(),
+            1
+        );
     }
 }
