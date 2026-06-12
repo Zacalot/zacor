@@ -319,12 +319,18 @@ pub struct InterfaceHost {
     // (overlays, prompt views) can allocate from the same namespaces.
     next_hit_region_id: u64,
     next_focus_id: u64,
+    // Monotonic pane/split identity allocators for runtime splits.
+    // `insert_pane` bumps past caller-assigned ids and construction seeds
+    // past tree-constructed split ids, so allocated ids never alias either.
+    next_pane_id: u64,
+    next_split_id: u64,
     /// Cursor blink phase; painting skips the cursor while hidden.
     cursor_visible: bool,
 }
 
 impl InterfaceHost {
     pub fn new(tree: PaneTree) -> Self {
+        let next_split_id = max_split_id(&tree.root) + 1;
         Self {
             buffers: BufferStore::new(),
             views: ViewStore::new(),
@@ -335,6 +341,8 @@ impl InterfaceHost {
             background: None,
             next_hit_region_id: 1,
             next_focus_id: 1,
+            next_pane_id: 1,
+            next_split_id,
             cursor_visible: true,
         }
     }
@@ -356,13 +364,69 @@ impl InterfaceHost {
         id
     }
 
+    fn allocate_pane_id(&mut self) -> PaneId {
+        let id = PaneId(self.next_pane_id);
+        self.next_pane_id += 1;
+        id
+    }
+
+    fn allocate_split_id(&mut self) -> SplitId {
+        let id = SplitId(self.next_split_id);
+        self.next_split_id += 1;
+        id
+    }
+
     /// Insert a pane, stamping its interaction identity. Replacing an existing
     /// pane id allocates fresh region ids; any stale ids held elsewhere
     /// (e.g. focus state) simply stop matching.
     pub fn insert_pane(&mut self, mut pane: Pane) -> Option<Pane> {
+        self.next_pane_id = self.next_pane_id.max(pane.id().0 + 1);
         pane.hit_id = Some(self.allocate_hit_region_id());
         pane.focus_id = pane.focusable.then(|| self.allocate_focus_id());
         self.panes.insert(pane.id(), pane)
+    }
+
+    /// Split `target` along `axis`, inserting a new focusable pane after it
+    /// with equal weight. The new pane hosts a fresh view over the same
+    /// buffer (Emacs `C-x 2` semantics: each pane owns its own cursor and
+    /// scroll) and inherits the target's chrome. Returns the new pane's id.
+    pub fn split_pane(&mut self, target: PaneId, axis: Axis) -> Result<PaneId, HostError> {
+        if !self.panes.contains_key(&target) || !node_contains_pane(&self.tree.root, target) {
+            return Err(HostError::new("split target pane does not exist"));
+        }
+
+        let buffer = self
+            .panes
+            .get(&target)
+            .and_then(Pane::view)
+            .and_then(|view| self.views.get(view))
+            .map(View::buffer);
+        let view = buffer.map(|buffer| self.views.create(buffer));
+        let chrome = self.panes.get(&target).and_then(|pane| pane.chrome.clone());
+
+        let new_id = self.allocate_pane_id();
+        let mut pane = Pane::new(new_id, PaneContent::empty()).with_focusable(true);
+        pane.view = view;
+        pane.chrome = chrome;
+        self.insert_pane(pane);
+
+        let split = SplitNode::new(
+            self.allocate_split_id(),
+            axis,
+            vec![PaneNode::pane(target), PaneNode::pane(new_id)],
+        )
+        .expect("split children are non-empty");
+        let mut split = Some(split);
+        let replaced = replace_pane_with_split(&mut self.tree.root, target, &mut split);
+        debug_assert!(replaced, "tree containment was validated before mutation");
+        Ok(new_id)
+    }
+
+    /// Pane ids in tree (layout) order — the cycle order for pane navigation.
+    pub fn pane_order(&self) -> Vec<PaneId> {
+        let mut order = Vec::new();
+        collect_pane_order(&self.tree.root, &mut order);
+        order
     }
 
     pub fn pane_hit_region_id(&self, id: PaneId) -> Option<HitRegionId> {
@@ -579,6 +643,59 @@ impl InteractionTargetMap {
 struct LaidOutPane {
     id: PaneId,
     rect: Rect,
+}
+
+fn max_split_id(node: &PaneNode) -> u64 {
+    match node {
+        PaneNode::Pane(_) => 0,
+        PaneNode::Split(split) => split
+            .children
+            .iter()
+            .map(max_split_id)
+            .fold(split.id.0, u64::max),
+    }
+}
+
+fn node_contains_pane(node: &PaneNode, target: PaneId) -> bool {
+    match node {
+        PaneNode::Pane(id) => *id == target,
+        PaneNode::Split(split) => split
+            .children
+            .iter()
+            .any(|child| node_contains_pane(child, target)),
+    }
+}
+
+/// Replace the leaf node for `target` with `split` (taken from the option on
+/// the single match). Returns whether a replacement happened.
+fn replace_pane_with_split(
+    node: &mut PaneNode,
+    target: PaneId,
+    split: &mut Option<SplitNode>,
+) -> bool {
+    match node {
+        PaneNode::Pane(id) if *id == target => {
+            let split = split.take().expect("split is consumed at most once");
+            *node = PaneNode::Split(split);
+            true
+        }
+        PaneNode::Pane(_) => false,
+        PaneNode::Split(existing) => existing
+            .children
+            .iter_mut()
+            .any(|child| replace_pane_with_split(child, target, split)),
+    }
+}
+
+fn collect_pane_order(node: &PaneNode, order: &mut Vec<PaneId>) {
+    match node {
+        PaneNode::Pane(id) => order.push(*id),
+        PaneNode::Split(split) => {
+            for child in &split.children {
+                collect_pane_order(child, order);
+            }
+        }
+    }
 }
 
 fn layout_node(node: &PaneNode, bounds: Rect, panes: &mut Vec<LaidOutPane>) {
@@ -1246,6 +1363,145 @@ mod tests {
         let snapshot = snapshot(&host, Size::new(20.0, 10.0));
         assert_eq!(snapshot.targets.pane_for_hit_region(overlay_hit), None);
         assert_eq!(snapshot.targets.pane_for_focus_region(overlay_focus), None);
+    }
+
+    fn collect_split_ids(node: &PaneNode, ids: &mut Vec<u64>) {
+        if let PaneNode::Split(split) = node {
+            ids.push(split.id.0);
+            for child in &split.children {
+                collect_split_ids(child, ids);
+            }
+        }
+    }
+
+    #[test]
+    fn split_pane_replaces_leaf_with_split() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+
+        let new_pane = host.split_pane(LEFT, Axis::Horizontal).unwrap();
+
+        assert_eq!(host.pane_order(), vec![LEFT, new_pane]);
+        let layout = host.tree.layout(Rect::from_xywh(0.0, 0.0, 100.0, 40.0));
+        assert_eq!(layout.len(), 2);
+        assert_eq!(layout[0].rect, Rect::from_xywh(0.0, 0.0, 50.0, 40.0));
+        assert_eq!(layout[1].rect, Rect::from_xywh(50.0, 0.0, 50.0, 40.0));
+    }
+
+    #[test]
+    fn split_pane_new_pane_views_same_buffer() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        let new_pane = host.split_pane(LEFT, Axis::Vertical).unwrap();
+
+        let new_view = host.pane(new_pane).unwrap().view().unwrap();
+        assert_ne!(new_view, view);
+        assert_eq!(host.view(new_view).unwrap().buffer(), buffer);
+    }
+
+    #[test]
+    fn split_pane_clones_chrome_and_focusability() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(
+            Pane::new(LEFT, PaneContent::empty())
+                .with_focusable(true)
+                .with_chrome(PaneChrome::new().with_background(Color::WHITE)),
+        );
+        let target_hit = host.pane_hit_region_id(LEFT).unwrap();
+        let target_focus = host.pane_focus_id(LEFT).unwrap();
+
+        let new_pane = host.split_pane(LEFT, Axis::Horizontal).unwrap();
+
+        let pane = host.pane(new_pane).unwrap();
+        assert!(pane.focusable());
+        assert_eq!(
+            pane.chrome.as_ref().and_then(|chrome| chrome.background),
+            Some(Color::WHITE)
+        );
+        // Fresh interaction identity, stamped by the insert path.
+        assert!(pane.hit_region_id().is_some());
+        assert!(pane.focus_id().is_some());
+        assert_ne!(pane.hit_region_id(), Some(target_hit));
+        assert_ne!(pane.focus_id(), Some(target_focus));
+    }
+
+    #[test]
+    fn split_pane_unknown_or_untreed_pane_errors() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+        // In the pane map but not in the layout tree.
+        host.insert_pane(Pane::new(RIGHT, PaneContent::empty()));
+
+        assert!(host.split_pane(PaneId(99), Axis::Horizontal).is_err());
+        assert!(host.split_pane(RIGHT, Axis::Horizontal).is_err());
+        assert_eq!(host.pane_order(), vec![LEFT]);
+    }
+
+    #[test]
+    fn split_pane_viewless_target_creates_viewless_pane() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+
+        let new_pane = host.split_pane(LEFT, Axis::Vertical).unwrap();
+
+        assert_eq!(host.pane(new_pane).unwrap().view(), None);
+    }
+
+    #[test]
+    fn split_allocates_pane_ids_above_inserted_ids() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(PaneId(7))));
+        host.insert_pane(Pane::new(PaneId(7), PaneContent::empty()));
+
+        let new_pane = host.split_pane(PaneId(7), Axis::Horizontal).unwrap();
+
+        assert!(new_pane.0 >= 8, "allocated ids never alias caller ids");
+    }
+
+    #[test]
+    fn split_ids_do_not_collide_with_constructed_tree() {
+        // The fixture tree was constructed with SplitId(1); the allocator
+        // must have been seeded past it.
+        let mut host = InterfaceHost::new(horizontal_tree());
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+        host.insert_pane(Pane::new(RIGHT, PaneContent::empty()));
+
+        host.split_pane(LEFT, Axis::Vertical).unwrap();
+
+        let mut split_ids = Vec::new();
+        collect_split_ids(&host.tree.root, &mut split_ids);
+        split_ids.sort_unstable();
+        let mut deduped = split_ids.clone();
+        deduped.dedup();
+        assert_eq!(split_ids, deduped, "split ids must stay unique");
+    }
+
+    #[test]
+    fn splitting_a_split_child_nests() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+
+        let second = host.split_pane(LEFT, Axis::Horizontal).unwrap();
+        let third = host.split_pane(second, Axis::Vertical).unwrap();
+
+        assert_eq!(host.pane_order(), vec![LEFT, second, third]);
+        let layout = host.tree.layout(Rect::from_xywh(0.0, 0.0, 100.0, 40.0));
+        assert_eq!(layout.len(), 3);
+        // The right half is stacked: second on top, third below.
+        assert_eq!(layout[1].rect, Rect::from_xywh(50.0, 0.0, 50.0, 20.0));
+        assert_eq!(layout[2].rect, Rect::from_xywh(50.0, 20.0, 50.0, 20.0));
+    }
+
+    #[test]
+    fn pane_order_follows_tree_order() {
+        let mut host = InterfaceHost::new(horizontal_tree());
+        // Insertion order into the map must not matter; the tree decides.
+        host.insert_pane(Pane::new(RIGHT, PaneContent::empty()));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+
+        assert_eq!(host.pane_order(), vec![LEFT, RIGHT]);
     }
 
     #[test]

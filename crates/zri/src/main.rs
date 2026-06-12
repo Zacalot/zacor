@@ -9,7 +9,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use zri::function::{FunctionName, FunctionRegistry, FunctionRouter};
 use zri::host::{
-    BufferId, BufferKind, HostRuntime, InterfaceHost, Pane, PaneChrome, PaneContent, PaneId,
+    Axis, BufferId, BufferKind, HostRuntime, InterfaceHost, Pane, PaneChrome, PaneContent, PaneId,
     PaneNode, PaneTree, ViewCursor,
 };
 use zri::ingress::ZrIngress;
@@ -227,8 +227,8 @@ impl ZriApp {
         let (host, scratch) = initial_host();
         let mut runtime = HostRuntime::new(host, size);
         runtime.select_pane(ROOT_PANE);
-        runtime.set_functions(demo_functions(scratch));
-        runtime.set_keymaps(vec![("global".to_string(), demo_keymap())]);
+        runtime.set_functions(default_functions(scratch));
+        runtime.set_keymaps(vec![("global".to_string(), default_keymap())]);
         self.runtime = Some(runtime);
         self.renderer = Some(renderer);
         self.native_window = Some(NativeWindow { window, target });
@@ -289,33 +289,98 @@ fn initial_host() -> (InterfaceHost, BufferId) {
     (host, buffer)
 }
 
-/// Demo function proving the keymap -> function -> effect path natively:
-/// F1 stamps a line into the scratch buffer through the effect chokepoint.
-fn demo_functions(scratch: BufferId) -> FunctionRouter {
+/// Built-in interface functions: the F1 demo stamp plus the pane/buffer
+/// verbs behind the default keymap. Handlers only push effects; the runtime
+/// applies them with target revalidation.
+fn default_functions(scratch: BufferId) -> FunctionRouter {
     let mut registry = FunctionRegistry::new();
     registry.register_rust(
         FunctionName::new("demo.stamp").expect("valid function name"),
-        std::sync::Arc::new(move |context| {
+        Arc::new(move |context| {
             context.buf_append(scratch, "[zri] demo.stamp\n");
         }),
+    );
+    registry.register_rust(
+        FunctionName::new("pane.split-below").expect("valid function name"),
+        Arc::new(|context| context.split_active_pane(Axis::Vertical)),
+    );
+    registry.register_rust(
+        FunctionName::new("pane.split-right").expect("valid function name"),
+        Arc::new(|context| context.split_active_pane(Axis::Horizontal)),
+    );
+    registry.register_rust(
+        FunctionName::new("pane.other").expect("valid function name"),
+        Arc::new(|context| context.focus_next_pane()),
+    );
+    registry.register_rust(
+        FunctionName::new("buffer.new").expect("valid function name"),
+        Arc::new(|context| context.open_scratch_buffer()),
     );
     FunctionRouter::new(registry)
 }
 
-fn demo_keymap() -> Keymap {
+/// Default Emacs-style bindings: `C-x 2` / `C-x 3` split below/right,
+/// `C-x o` cycles panes, `C-x b` opens a fresh scratch buffer (placeholder
+/// for real buffer switching until the prompt exists), F1 demo stamp.
+fn default_keymap() -> Keymap {
     let mut keymap = Keymap::new();
+    bind(
+        &mut keymap,
+        vec![BindingChord {
+            key: Key::Function(1),
+            modifiers: zri::input::Modifiers::default(),
+            location: KeyLocation::Standard,
+        }],
+        "demo.stamp",
+    );
+    bind(
+        &mut keymap,
+        vec![ctrl_chord("x"), char_chord("2")],
+        "pane.split-below",
+    );
+    bind(
+        &mut keymap,
+        vec![ctrl_chord("x"), char_chord("3")],
+        "pane.split-right",
+    );
+    bind(
+        &mut keymap,
+        vec![ctrl_chord("x"), char_chord("o")],
+        "pane.other",
+    );
+    bind(
+        &mut keymap,
+        vec![ctrl_chord("x"), char_chord("b")],
+        "buffer.new",
+    );
+    keymap
+}
+
+fn bind(keymap: &mut Keymap, chords: Vec<BindingChord>, function: &str) {
     keymap
         .bind(
-            KeySequence::new(vec![BindingChord {
-                key: Key::Function(1),
-                modifiers: zri::input::Modifiers::default(),
-                location: KeyLocation::Standard,
-            }])
-            .expect("non-empty sequence"),
-            FunctionName::new("demo.stamp").expect("valid function name"),
+            KeySequence::new(chords).expect("non-empty sequence"),
+            FunctionName::new(function).expect("valid function name"),
         )
-        .expect("conflict-free demo binding");
-    keymap
+        .expect("conflict-free default binding");
+}
+
+fn char_chord(ch: &str) -> BindingChord {
+    BindingChord {
+        key: Key::Character(ch.to_string()),
+        modifiers: zri::input::Modifiers::default(),
+        location: KeyLocation::Standard,
+    }
+}
+
+fn ctrl_chord(ch: &str) -> BindingChord {
+    BindingChord {
+        modifiers: zri::input::Modifiers {
+            control: true,
+            ..Default::default()
+        },
+        ..char_chord(ch)
+    }
 }
 
 fn logical_size(size: PhysicalSize<u32>) -> Size {
@@ -342,26 +407,31 @@ mod tests {
         assert_eq!(host.buffer(buffer).unwrap().name(), "*scratch*");
     }
 
+    fn key_down(key: Key, text: Option<&str>, control: bool) -> zri::input::KeyboardEvent {
+        zri::input::KeyboardEvent::KeyDown(zri::input::KeyDownEvent {
+            keystroke: zri::input::Keystroke {
+                key,
+                text: text.map(ToOwned::to_owned),
+                modifiers: zri::input::Modifiers {
+                    control,
+                    ..Default::default()
+                },
+                location: KeyLocation::Standard,
+            },
+            repeat: false,
+            prefer_text: false,
+        })
+    }
+
     #[test]
     fn demo_binding_stamps_scratch_buffer_through_function_path() {
         let (host, scratch) = initial_host();
         let mut runtime = HostRuntime::new(host, Size::new(100.0, 50.0));
         runtime.select_pane(ROOT_PANE);
-        runtime.set_functions(demo_functions(scratch));
-        runtime.set_keymaps(vec![("global".to_string(), demo_keymap())]);
+        runtime.set_functions(default_functions(scratch));
+        runtime.set_keymaps(vec![("global".to_string(), default_keymap())]);
 
-        let result = runtime.handle_keyboard(zri::input::KeyboardEvent::KeyDown(
-            zri::input::KeyDownEvent {
-                keystroke: zri::input::Keystroke {
-                    key: Key::Function(1),
-                    text: None,
-                    modifiers: zri::input::Modifiers::default(),
-                    location: KeyLocation::Standard,
-                },
-                repeat: false,
-                prefer_text: false,
-            },
-        ));
+        let result = runtime.handle_keyboard(key_down(Key::Function(1), None, false));
 
         assert!(result.functions[0].result.is_ok());
         assert!(
@@ -372,5 +442,46 @@ mod tests {
                 .text()
                 .ends_with("[zri] demo.stamp\n")
         );
+    }
+
+    #[test]
+    fn default_keymap_binds_pane_and_buffer_commands() {
+        let keymap = default_keymap();
+        let active = [zri::keymap::ActiveKeymap {
+            name: "global",
+            keymap: &keymap,
+        }];
+        let mut resolver = zri::keymap::KeymapResolver::new();
+
+        let pending = resolver.resolve(&key_down(Key::Character("x".into()), None, true), &active);
+        assert!(matches!(
+            pending,
+            zri::keymap::KeymapResolution::Pending { .. }
+        ));
+
+        let matched = resolver.resolve(
+            &key_down(Key::Character("2".into()), Some("2"), false),
+            &active,
+        );
+        assert_eq!(
+            matched.matched_function(),
+            Some(&FunctionName::new("pane.split-below").unwrap())
+        );
+    }
+
+    #[test]
+    fn default_bindings_split_scratch_pane_end_to_end() {
+        let (host, scratch) = initial_host();
+        let mut runtime = HostRuntime::new(host, Size::new(200.0, 100.0));
+        runtime.select_pane(ROOT_PANE);
+        runtime.set_functions(default_functions(scratch));
+        runtime.set_keymaps(vec![("global".to_string(), default_keymap())]);
+
+        runtime.handle_keyboard(key_down(Key::Character("x".into()), None, true));
+        runtime.handle_keyboard(key_down(Key::Character("2".into()), Some("2"), false));
+
+        // The split landed and focus stayed on the original pane.
+        assert_eq!(runtime.host().pane_order().len(), 2);
+        assert_eq!(runtime.host().active_pane(), Some(ROOT_PANE));
     }
 }

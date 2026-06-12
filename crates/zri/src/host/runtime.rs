@@ -16,7 +16,9 @@ use crate::keymap::{ActiveKeymap, BindingChord, Keymap, KeymapResolution, Keymap
 use crate::render::{Frame, Size};
 use crate::text::TextSystem;
 
-use super::{HostSnapshot, InterfaceHost, PaneId, TextInputResult, apply_keyboard_event};
+use super::{
+    BufferKind, HostSnapshot, InterfaceHost, PaneId, TextInputResult, apply_keyboard_event,
+};
 
 /// How many deferred ingress events one turn applies before yielding back to
 /// the platform loop (Neovim breaks its event drain on pending input; Zed
@@ -400,6 +402,31 @@ impl HostRuntime {
             .find_map(|(_, keymap)| keymap.binding_for_chord(&chord).cloned())
     }
 
+    /// Select the next focusable pane in tree order, wrapping (Emacs
+    /// `other-window`). Rides the transactional `select_pane` path, so a
+    /// single-pane cycle early-outs as a no-op. Returns whether the
+    /// selection changed.
+    fn focus_to_next_pane(&mut self) -> bool {
+        let order: Vec<PaneId> = self
+            .host
+            .pane_order()
+            .into_iter()
+            .filter(|id| self.host.pane(*id).is_some_and(|pane| pane.focusable()))
+            .collect();
+        if order.is_empty() {
+            return false;
+        }
+        let next = match self
+            .host
+            .active_pane()
+            .and_then(|active| order.iter().position(|id| *id == active))
+        {
+            Some(index) => order[(index + 1) % order.len()],
+            None => order[0],
+        };
+        self.select_pane(next).is_some()
+    }
+
     /// Invoke a bound function and apply its effects through host mutation
     /// paths (buffered-then-committed; vanished targets are skipped).
     fn invoke_function(&mut self, name: &FunctionName, invocations: &mut Vec<FunctionInvocation>) {
@@ -416,6 +443,23 @@ impl HostRuntime {
                 match effect {
                     FunctionEffect::BufferAppend { buffer, text } => {
                         changed |= self.host.append_to_buffer(*buffer, text);
+                    }
+                    FunctionEffect::SplitActivePane { axis } => {
+                        // Focus stays on the original pane (Emacs split
+                        // behavior); no active pane means nothing to split.
+                        if let Some(active) = self.host.active_pane() {
+                            changed |= self.host.split_pane(active, *axis).is_ok();
+                        }
+                    }
+                    FunctionEffect::FocusNextPane => {
+                        changed |= self.focus_to_next_pane();
+                    }
+                    FunctionEffect::OpenScratchBuffer => {
+                        if let Some(active) = self.host.active_pane() {
+                            let buffer = self.host.create_buffer(BufferKind::Text, "*scratch*");
+                            let view = self.host.create_view(buffer);
+                            changed |= self.host.set_pane_view(active, Some(view));
+                        }
                     }
                 }
             }
@@ -1308,6 +1352,192 @@ mod tests {
         runtime.rebuild_snapshot_if_dirty();
 
         assert!(cursor_fill(runtime.frame()).is_some());
+    }
+
+    /// Control chords arrive from the native adapter with produced text
+    /// suppressed, so the test event mirrors that: no text.
+    fn ctrl_char_key(ch: &str) -> KeyboardEvent {
+        KeyboardEvent::KeyDown(KeyDownEvent {
+            keystroke: Keystroke {
+                key: Key::Character(ch.to_string()),
+                text: None,
+                modifiers: Modifiers {
+                    control: true,
+                    ..Modifiers::default()
+                },
+                location: KeyLocation::Standard,
+            },
+            repeat: false,
+            prefer_text: false,
+        })
+    }
+
+    fn verb_router() -> FunctionRouter {
+        let mut registry = crate::function::FunctionRegistry::new();
+        registry.register_rust(
+            FunctionName::new("pane.split-below").unwrap(),
+            Arc::new(|context| context.split_active_pane(crate::host::Axis::Vertical)),
+        );
+        registry.register_rust(
+            FunctionName::new("pane.other").unwrap(),
+            Arc::new(|context| context.focus_next_pane()),
+        );
+        registry.register_rust(
+            FunctionName::new("buffer.new").unwrap(),
+            Arc::new(|context| context.open_scratch_buffer()),
+        );
+        FunctionRouter::new(registry)
+    }
+
+    fn verbs_keymap() -> Keymap {
+        let ctrl_x = BindingChord {
+            key: Key::Character("x".to_string()),
+            modifiers: Modifiers {
+                control: true,
+                ..Modifiers::default()
+            },
+            location: KeyLocation::Standard,
+        };
+        let mut keymap = Keymap::new();
+        keymap
+            .bind(
+                crate::keymap::KeySequence::new(vec![ctrl_x.clone(), chord("2")]).unwrap(),
+                FunctionName::new("pane.split-below").unwrap(),
+            )
+            .unwrap();
+        keymap
+            .bind(
+                crate::keymap::KeySequence::new(vec![ctrl_x.clone(), chord("o")]).unwrap(),
+                FunctionName::new("pane.other").unwrap(),
+            )
+            .unwrap();
+        keymap
+            .bind(
+                crate::keymap::KeySequence::new(vec![ctrl_x, chord("b")]).unwrap(),
+                FunctionName::new("buffer.new").unwrap(),
+            )
+            .unwrap();
+        keymap
+    }
+
+    fn verbs_runtime() -> (HostRuntime, crate::host::BufferId) {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer_with_text(BufferKind::Text, "scratch", "hello");
+        let view = host.create_view(buffer);
+        host.insert_pane(
+            Pane::new(LEFT, PaneContent::empty())
+                .with_focusable(true)
+                .with_view(view),
+        );
+        let mut runtime = HostRuntime::new(host, Size::new(200.0, 80.0));
+        runtime.select_pane(LEFT);
+        runtime.set_functions(verb_router());
+        runtime.set_keymaps(vec![("global".into(), verbs_keymap())]);
+        (runtime, buffer)
+    }
+
+    #[test]
+    fn ctrl_x_2_splits_active_pane_and_keeps_focus() {
+        let (mut runtime, _) = verbs_runtime();
+
+        let pending = runtime.handle_keyboard(ctrl_char_key("x"));
+        assert!(matches!(pending.keymap, KeymapResolution::Pending { .. }));
+        let matched = runtime.handle_keyboard(char_key("2"));
+
+        assert!(matches!(matched.keymap, KeymapResolution::Matched { .. }));
+        assert!(matched.functions[0].result.is_ok());
+        assert_eq!(runtime.host().pane_order().len(), 2);
+        // Emacs split behavior: focus stays on the original pane.
+        assert_eq!(runtime.host().active_pane(), Some(LEFT));
+        assert!(runtime.is_dirty());
+    }
+
+    #[test]
+    fn ctrl_x_o_cycles_focus_to_next_pane_and_wraps() {
+        let (mut runtime, _) = verbs_runtime();
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        runtime.handle_keyboard(char_key("2"));
+        let new_pane = runtime.host().pane_order()[1];
+        let new_focus = runtime.host().pane_focus_id(new_pane).unwrap();
+
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        runtime.handle_keyboard(char_key("o"));
+        assert_eq!(runtime.host().active_pane(), Some(new_pane));
+        assert_eq!(runtime.focus_state().focused(), Some(new_focus));
+
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        runtime.handle_keyboard(char_key("o"));
+        assert_eq!(runtime.host().active_pane(), Some(LEFT));
+    }
+
+    #[test]
+    fn other_pane_with_single_pane_is_noop() {
+        let (mut runtime, _) = verbs_runtime();
+
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        let result = runtime.handle_keyboard(char_key("o"));
+
+        assert!(result.functions[0].result.is_ok());
+        assert_eq!(runtime.host().active_pane(), Some(LEFT));
+    }
+
+    #[test]
+    fn ctrl_x_b_replaces_view_and_receives_typing() {
+        let (mut runtime, original) = verbs_runtime();
+
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        runtime.handle_keyboard(char_key("b"));
+
+        let view = runtime.host().selected_view().unwrap();
+        let new_buffer = runtime.host().view(view).unwrap().buffer();
+        assert_ne!(new_buffer, original);
+
+        runtime.handle_keyboard(char_key("a"));
+        assert_eq!(runtime.host().buffer(new_buffer).unwrap().text(), "a");
+        assert_eq!(runtime.host().buffer(original).unwrap().text(), "hello");
+    }
+
+    #[test]
+    fn editing_one_view_leaves_sibling_view_cursor_stale_but_safe() {
+        let (mut runtime, buffer) = verbs_runtime();
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        runtime.handle_keyboard(char_key("2"));
+        let sibling = runtime.host().pane_order()[1];
+        let sibling_view = runtime.host().pane(sibling).unwrap().view().unwrap();
+        let before = runtime.host().view(sibling_view).unwrap().cursor();
+
+        runtime.handle_keyboard(char_key("z"));
+
+        // The shared buffer changed through the focused view; the sibling
+        // view's cursor is deliberately not synchronized (the watched
+        // rope/transactions trigger) and painting stays safe.
+        assert!(
+            runtime
+                .host()
+                .buffer(buffer)
+                .unwrap()
+                .text()
+                .starts_with('z')
+        );
+        assert_eq!(runtime.host().view(sibling_view).unwrap().cursor(), before);
+        runtime.rebuild_snapshot_if_dirty();
+        assert!(!runtime.frame().scene.items().is_empty());
+    }
+
+    #[test]
+    fn split_effect_without_active_pane_is_skipped() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+        let mut runtime = HostRuntime::new(host, Size::new(100.0, 50.0));
+        runtime.set_functions(verb_router());
+        runtime.set_keymaps(vec![("global".into(), verbs_keymap())]);
+
+        runtime.handle_keyboard(ctrl_char_key("x"));
+        let result = runtime.handle_keyboard(char_key("2"));
+
+        // The function ran, but the effect found no active pane and skipped.
+        assert!(result.functions[0].result.is_ok());
+        assert_eq!(runtime.host().pane_order().len(), 1);
     }
 
     #[test]

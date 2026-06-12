@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::host::BufferId;
+use crate::host::{Axis, BufferId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionError {
@@ -161,7 +161,20 @@ impl FunctionRegistry {
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FunctionEffect {
-    BufferAppend { buffer: BufferId, text: String },
+    BufferAppend {
+        buffer: BufferId,
+        text: String,
+    },
+    /// Split whichever pane is active when the effect applies (Emacs
+    /// split-selected-window semantics; resolved by the runtime at apply
+    /// time, like every other effect target).
+    SplitActivePane {
+        axis: Axis,
+    },
+    /// Move selection to the next focusable pane in tree order, wrapping.
+    FocusNextPane,
+    /// Create a fresh scratch text buffer and host it in the active pane.
+    OpenScratchBuffer,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -186,6 +199,21 @@ impl FunctionContext {
             buffer,
             text: text.into(),
         });
+    }
+
+    /// Queue a split of the pane that is active when the effect applies.
+    pub fn split_active_pane(&mut self, axis: Axis) {
+        self.effects.push(FunctionEffect::SplitActivePane { axis });
+    }
+
+    /// Queue a selection move to the next focusable pane in tree order.
+    pub fn focus_next_pane(&mut self) {
+        self.effects.push(FunctionEffect::FocusNextPane);
+    }
+
+    /// Queue creation of a fresh scratch buffer hosted in the active pane.
+    pub fn open_scratch_buffer(&mut self) {
+        self.effects.push(FunctionEffect::OpenScratchBuffer);
     }
 
     pub fn push_effect(&mut self, effect: FunctionEffect) {
