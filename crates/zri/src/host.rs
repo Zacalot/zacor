@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 mod model;
 mod runtime;
+mod text_input;
 
 use crate::input::{
     FocusId, HitBehavior, HitRegionId, InputListenerRegistry, KeyboardHandler, PointerHandler,
@@ -18,6 +19,7 @@ pub use model::{
 pub use runtime::{
     HostRuntime, HostTurnResult, InputTurnResult, KeyboardTurnResult, PointerTurnResult,
 };
+pub use text_input::{TextInputResult, apply_keyboard_event};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PaneId(pub u64);
@@ -126,17 +128,17 @@ impl PaneContent {
 
     fn register_listeners(
         &self,
-        ids: InteractionIds,
-        focusable: bool,
+        hit_id: HitRegionId,
+        focus_id: Option<FocusId>,
         registry: &mut InputListenerRegistry,
     ) {
         for handler in &self.pointer_handlers {
-            registry.pointer.register(ids.hit, handler.clone());
+            registry.pointer.register(hit_id, handler.clone());
         }
 
-        if focusable {
+        if let Some(focus_id) = focus_id {
             for handler in &self.keyboard_handlers {
-                registry.keyboard.register(ids.focus, handler.clone());
+                registry.keyboard.register(focus_id, handler.clone());
             }
         }
     }
@@ -149,6 +151,12 @@ pub struct Pane {
     chrome: Option<PaneChrome>,
     focusable: bool,
     hit_behavior: HitBehavior,
+    /// Interaction identity, stamped by `InterfaceHost::insert_pane` from the
+    /// host's monotonic allocators. Never derived from the pane id: region
+    /// identity and pane identity are separate namespaces related only through
+    /// the interaction target map.
+    hit_id: Option<HitRegionId>,
+    focus_id: Option<FocusId>,
 }
 
 impl Pane {
@@ -160,6 +168,8 @@ impl Pane {
             chrome: None,
             focusable: false,
             hit_behavior: HitBehavior::Normal,
+            hit_id: None,
+            focus_id: None,
         }
     }
 
@@ -205,6 +215,14 @@ impl Pane {
 
     pub fn focusable(&self) -> bool {
         self.focusable
+    }
+
+    pub fn hit_region_id(&self) -> Option<HitRegionId> {
+        self.hit_id
+    }
+
+    pub fn focus_id(&self) -> Option<FocusId> {
+        self.focus_id
     }
 }
 
@@ -288,6 +306,11 @@ pub struct InterfaceHost {
     tree: PaneTree,
     active_pane: Option<PaneId>,
     background: Option<Color>,
+    // Monotonic, never-reset interaction id allocators (GPUI HitboxId
+    // semantics): stale ids miss rather than alias, and non-pane surfaces
+    // (overlays, prompt views) can allocate from the same namespaces.
+    next_hit_region_id: u64,
+    next_focus_id: u64,
 }
 
 impl InterfaceHost {
@@ -300,6 +323,8 @@ impl InterfaceHost {
             tree,
             active_pane: None,
             background: None,
+            next_hit_region_id: 1,
+            next_focus_id: 1,
         }
     }
 
@@ -308,8 +333,33 @@ impl InterfaceHost {
         self
     }
 
-    pub fn insert_pane(&mut self, pane: Pane) -> Option<Pane> {
+    pub(crate) fn allocate_hit_region_id(&mut self) -> HitRegionId {
+        let id = HitRegionId(self.next_hit_region_id);
+        self.next_hit_region_id += 1;
+        id
+    }
+
+    pub(crate) fn allocate_focus_id(&mut self) -> FocusId {
+        let id = FocusId(self.next_focus_id);
+        self.next_focus_id += 1;
+        id
+    }
+
+    /// Insert a pane, stamping its interaction identity. Replacing an existing
+    /// pane id allocates fresh region ids; any stale ids held elsewhere
+    /// (e.g. focus state) simply stop matching.
+    pub fn insert_pane(&mut self, mut pane: Pane) -> Option<Pane> {
+        pane.hit_id = Some(self.allocate_hit_region_id());
+        pane.focus_id = pane.focusable.then(|| self.allocate_focus_id());
         self.panes.insert(pane.id(), pane)
+    }
+
+    pub fn pane_hit_region_id(&self, id: PaneId) -> Option<HitRegionId> {
+        self.panes.get(&id).and_then(Pane::hit_region_id)
+    }
+
+    pub fn pane_focus_id(&self, id: PaneId) -> Option<FocusId> {
+        self.panes.get(&id).and_then(Pane::focus_id)
     }
 
     pub fn create_buffer(&mut self, kind: BufferKind, name: impl Into<String>) -> BufferId {
@@ -365,10 +415,11 @@ impl InterfaceHost {
         self.panes.get_mut(&id)
     }
 
-    pub fn select_pane(&mut self, id: PaneId) {
-        self.active_pane = Some(id);
-        let selected_view = self.panes.get(&id).and_then(Pane::view);
-        self.frame.set_selected_view(selected_view);
+    /// Follower setter for the derived active pane. Selection authority lives
+    /// in `HostRuntime`'s focus state; only the runtime's transactional
+    /// selection path (and in-module tests) may write this.
+    fn set_active_pane(&mut self, id: Option<PaneId>) {
+        self.active_pane = id;
     }
 
     pub fn active_pane(&self) -> Option<PaneId> {
@@ -379,8 +430,12 @@ impl InterfaceHost {
         &self.frame
     }
 
+    /// The selected view is a pure derivation of the active pane, never
+    /// stored: one selection authority, everything else derived.
     pub fn selected_view(&self) -> Option<ViewId> {
-        self.frame.selected_view()
+        self.active_pane
+            .and_then(|id| self.panes.get(&id))
+            .and_then(Pane::view)
     }
 
     pub fn build_snapshot(&self, size: Size) -> HostSnapshot {
@@ -403,14 +458,16 @@ impl InterfaceHost {
                 continue;
             };
 
-            let ids = interaction_ids_for_pane(pane.id());
+            let hit_id = pane
+                .hit_id
+                .expect("pane interaction ids are stamped on insert");
 
-            targets.hit_regions.insert(ids.hit, pane.id());
-            paint.hit_region_with_behavior(ids.hit, pane_rect.rect, pane.hit_behavior);
+            targets.hit_regions.insert(hit_id, pane.id());
+            paint.hit_region_with_behavior(hit_id, pane_rect.rect, pane.hit_behavior);
 
-            if pane.focusable {
-                targets.focus_regions.insert(ids.focus, pane.id());
-                paint.focus_region(ids.focus, pane_rect.rect);
+            if let Some(focus_id) = pane.focus_id {
+                targets.focus_regions.insert(focus_id, pane.id());
+                paint.focus_region(focus_id, pane_rect.rect);
             }
 
             if let Some(chrome) = &pane.chrome {
@@ -430,7 +487,7 @@ impl InterfaceHost {
             }
 
             pane.content
-                .register_listeners(ids, pane.focusable, &mut listeners);
+                .register_listeners(hit_id, pane.focus_id, &mut listeners);
         }
 
         HostSnapshot {
@@ -479,23 +536,10 @@ impl InteractionTargetMap {
     }
 }
 
-#[derive(Clone, Copy)]
-struct InteractionIds {
-    hit: HitRegionId,
-    focus: FocusId,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LaidOutPane {
     id: PaneId,
     rect: Rect,
-}
-
-fn interaction_ids_for_pane(id: PaneId) -> InteractionIds {
-    InteractionIds {
-        hit: HitRegionId(id.0),
-        focus: FocusId(id.0),
-    }
 }
 
 fn layout_node(node: &PaneNode, bounds: Rect, panes: &mut Vec<LaidOutPane>) {
@@ -700,37 +744,29 @@ mod tests {
     fn build_snapshot_contains_frame_and_listeners_from_same_layout() {
         let mut host = InterfaceHost::new(horizontal_tree()).with_background(Color::BLACK);
         let events = Arc::new(Mutex::new(Vec::new()));
-        let mut left_content = PaneContent::empty();
-        left_content.on_pointer(Arc::new({
-            let events = events.clone();
-            move |_| {
-                events.lock().unwrap().push("left-pointer");
-                PointerDispatchResult::handled_by(HitRegionId(LEFT.0))
-            }
-        }));
         host.insert_pane(
-            Pane::new(LEFT, left_content)
+            Pane::new(LEFT, PaneContent::empty())
                 .with_chrome(PaneChrome::new().with_background(Color::WHITE))
                 .with_focusable(true),
         );
         host.insert_pane(Pane::new(RIGHT, PaneContent::empty()));
+        let left_hit = host.pane_hit_region_id(LEFT).unwrap();
+        host.pane_mut(LEFT)
+            .unwrap()
+            .content_mut()
+            .on_pointer(Arc::new({
+                let events = events.clone();
+                move |_| {
+                    events.lock().unwrap().push("left-pointer");
+                    PointerDispatchResult::handled_by(left_hit)
+                }
+            }));
 
         let snapshot = host.build_snapshot(Size::new(100.0, 20.0));
 
         assert_eq!(snapshot.frame.size, Size::new(100.0, 20.0));
-        assert!(
-            snapshot
-                .targets
-                .pane_for_hit_region(HitRegionId(LEFT.0))
-                .is_some()
-        );
-        assert!(
-            snapshot
-                .listeners
-                .pointer
-                .handlers_for(HitRegionId(LEFT.0))
-                .is_some()
-        );
+        assert_eq!(snapshot.targets.pane_for_hit_region(left_hit), Some(LEFT));
+        assert!(snapshot.listeners.pointer.handlers_for(left_hit).is_some());
     }
 
     #[test]
@@ -756,7 +792,10 @@ mod tests {
         let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
 
         assert_eq!(snapshot.frame.hit_regions.len(), 1);
-        assert_eq!(snapshot.frame.hit_regions[0].id, HitRegionId(LEFT.0));
+        assert_eq!(
+            snapshot.frame.hit_regions[0].id,
+            host.pane_hit_region_id(LEFT).unwrap()
+        );
         assert_eq!(
             snapshot.frame.hit_regions[0].behavior,
             HitBehavior::BlockPointer
@@ -771,7 +810,10 @@ mod tests {
         let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
 
         assert_eq!(snapshot.frame.focus_regions.len(), 1);
-        assert_eq!(snapshot.frame.focus_regions[0].id, FocusId(LEFT.0));
+        assert_eq!(
+            snapshot.frame.focus_regions[0].id,
+            host.pane_focus_id(LEFT).unwrap()
+        );
     }
 
     #[test]
@@ -793,15 +835,21 @@ mod tests {
         let snapshot = host.build_snapshot(Size::new(100.0, 20.0));
 
         assert_eq!(
-            snapshot.targets.pane_for_hit_region(HitRegionId(LEFT.0)),
+            snapshot
+                .targets
+                .pane_for_hit_region(host.pane_hit_region_id(LEFT).unwrap()),
             Some(LEFT)
         );
         assert_eq!(
-            snapshot.targets.pane_for_focus_region(FocusId(LEFT.0)),
+            snapshot
+                .targets
+                .pane_for_focus_region(host.pane_focus_id(LEFT).unwrap()),
             Some(LEFT)
         );
         assert_eq!(
-            snapshot.targets.pane_for_hit_region(HitRegionId(RIGHT.0)),
+            snapshot
+                .targets
+                .pane_for_hit_region(host.pane_hit_region_id(RIGHT).unwrap()),
             Some(RIGHT)
         );
     }
@@ -881,27 +929,22 @@ mod tests {
     fn build_snapshot_registers_keyboard_handlers_only_for_focusable_panes() {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
         let mut content = PaneContent::empty();
-        content.on_keyboard(Arc::new(|_| {
-            KeyboardDispatchResult::handled_by(FocusId(LEFT.0))
-        }));
+        content.on_keyboard(Arc::new(|_| KeyboardDispatchResult::ignored()));
         host.insert_pane(Pane::new(LEFT, content));
 
         let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
 
-        assert!(
-            snapshot
-                .listeners
-                .keyboard
-                .handlers_for(FocusId(LEFT.0))
-                .is_none()
-        );
+        // An unfocusable pane has no focus identity at all, so no keyboard
+        // handlers can be registered for it.
+        assert!(host.pane_focus_id(LEFT).is_none());
+        assert!(snapshot.frame.focus_regions.is_empty());
     }
 
     #[test]
-    fn selected_pane_is_retained_across_snapshot_builds() {
+    fn active_pane_is_retained_across_snapshot_builds() {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
-        host.select_pane(LEFT);
+        host.set_active_pane(Some(LEFT));
 
         let _first = host.build_snapshot(Size::new(20.0, 10.0));
         let _second = host.build_snapshot(Size::new(30.0, 15.0));
@@ -910,37 +953,69 @@ mod tests {
     }
 
     #[test]
-    fn selecting_pane_selects_hosted_view() {
+    fn selected_view_derives_from_active_pane() {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
         let buffer = host.create_buffer(BufferKind::Log, "log");
         let view = host.create_view(buffer);
         host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
 
-        host.select_pane(LEFT);
+        host.set_active_pane(Some(LEFT));
 
         assert_eq!(host.active_pane(), Some(LEFT));
         assert_eq!(host.selected_view(), Some(view));
     }
 
     #[test]
+    fn selected_view_is_none_without_active_pane() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer(BufferKind::Text, "scratch");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_view(view));
+
+        assert_eq!(host.selected_view(), None);
+    }
+
+    #[test]
+    fn selected_view_is_none_for_viewless_pane() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+
+        host.set_active_pane(Some(LEFT));
+
+        assert_eq!(host.selected_view(), None);
+    }
+
+    #[test]
+    fn assigning_pane_view_updates_derived_selected_view() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        let buffer = host.create_buffer(BufferKind::Text, "scratch");
+        let view = host.create_view(buffer);
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()));
+        host.set_active_pane(Some(LEFT));
+        assert_eq!(host.selected_view(), None);
+
+        assert!(host.set_pane_view(LEFT, Some(view)));
+
+        assert_eq!(host.selected_view(), Some(view));
+    }
+
+    #[test]
     fn pointer_and_keyboard_handlers_survive_snapshot_registration() {
         let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
-        let mut content = PaneContent::empty();
-        content.on_pointer(Arc::new(|_| {
-            PointerDispatchResult::handled_by(HitRegionId(LEFT.0))
-        }));
-        content.on_keyboard(Arc::new(|context| {
-            assert!(context.plan.is_key_down());
-            KeyboardDispatchResult::handled_by(FocusId(LEFT.0))
-        }));
-        host.insert_pane(Pane::new(LEFT, content).with_focusable(true));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+        let hit_id = host.pane_hit_region_id(LEFT).unwrap();
+        let focus_id = host.pane_focus_id(LEFT).unwrap();
+        {
+            let content = host.pane_mut(LEFT).unwrap().content_mut();
+            content.on_pointer(Arc::new(move |_| PointerDispatchResult::handled_by(hit_id)));
+            content.on_keyboard(Arc::new(move |context| {
+                assert!(context.plan.is_key_down());
+                KeyboardDispatchResult::handled_by(focus_id)
+            }));
+        }
 
         let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
-        let keyboard_handlers = snapshot
-            .listeners
-            .keyboard
-            .handlers_for(FocusId(LEFT.0))
-            .unwrap();
+        let keyboard_handlers = snapshot.listeners.keyboard.handlers_for(focus_id).unwrap();
         let plan = crate::input::KeyboardDispatchPlan {
             event: KeyboardEvent::KeyDown(KeyDownEvent {
                 keystroke: Keystroke {
@@ -952,8 +1027,8 @@ mod tests {
                 repeat: false,
                 prefer_text: false,
             }),
-            focused: Some(FocusId(LEFT.0)),
-            target: Some(FocusId(LEFT.0)),
+            focused: Some(focus_id),
+            target: Some(focus_id),
             kind: crate::input::KeyboardDispatchKind::KeyDown,
             propagation: crate::input::KeyboardPropagation::FocusOnly,
         };
@@ -962,7 +1037,7 @@ mod tests {
             snapshot
                 .listeners
                 .pointer
-                .handlers_for(HitRegionId(LEFT.0))
+                .handlers_for(hit_id)
                 .unwrap()
                 .len(),
             1
@@ -970,7 +1045,75 @@ mod tests {
         assert_eq!(keyboard_handlers.len(), 1);
         assert_eq!(
             keyboard_handlers[0](&crate::input::KeyboardDispatchContext { plan: &plan }).consumer,
-            Some(FocusId(LEFT.0))
+            Some(focus_id)
         );
+    }
+
+    #[test]
+    fn region_ids_are_stable_across_snapshots_and_unique_per_pane() {
+        let mut host = InterfaceHost::new(horizontal_tree());
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+        host.insert_pane(Pane::new(RIGHT, PaneContent::empty()).with_focusable(true));
+
+        let left_hit = host.pane_hit_region_id(LEFT).unwrap();
+        let right_hit = host.pane_hit_region_id(RIGHT).unwrap();
+        let left_focus = host.pane_focus_id(LEFT).unwrap();
+        let right_focus = host.pane_focus_id(RIGHT).unwrap();
+
+        assert_ne!(left_hit, right_hit);
+        assert_ne!(left_focus, right_focus);
+
+        let _first = host.build_snapshot(Size::new(100.0, 20.0));
+        let second = host.build_snapshot(Size::new(100.0, 20.0));
+
+        assert_eq!(host.pane_hit_region_id(LEFT), Some(left_hit));
+        assert_eq!(host.pane_focus_id(RIGHT), Some(right_focus));
+        assert_eq!(second.targets.pane_for_hit_region(left_hit), Some(LEFT));
+    }
+
+    #[test]
+    fn region_ids_are_not_derived_from_pane_ids() {
+        // Insert in reverse pane-number order so any derivation scheme would
+        // be exposed: allocation order, not pane numbering, defines ids.
+        let mut host = InterfaceHost::new(horizontal_tree());
+        host.insert_pane(Pane::new(RIGHT, PaneContent::empty()).with_focusable(true));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+
+        assert_eq!(host.pane_hit_region_id(RIGHT), Some(HitRegionId(1)));
+        assert_eq!(host.pane_hit_region_id(LEFT), Some(HitRegionId(2)));
+        assert_ne!(host.pane_hit_region_id(RIGHT).unwrap().0, RIGHT.0);
+    }
+
+    #[test]
+    fn reinserting_pane_allocates_fresh_ids_and_stale_ids_miss() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+        let stale_hit = host.pane_hit_region_id(LEFT).unwrap();
+        let stale_focus = host.pane_focus_id(LEFT).unwrap();
+
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+
+        assert_ne!(host.pane_hit_region_id(LEFT), Some(stale_hit));
+        assert_eq!(snapshot.targets.pane_for_hit_region(stale_hit), None);
+        assert_eq!(snapshot.targets.pane_for_focus_region(stale_focus), None);
+    }
+
+    #[test]
+    fn allocators_serve_non_pane_regions_without_collision() {
+        let mut host = InterfaceHost::new(PaneTree::new(PaneNode::pane(LEFT)));
+        host.insert_pane(Pane::new(LEFT, PaneContent::empty()).with_focusable(true));
+
+        // The overlay path (future prompt/minibuffer) allocates from the same
+        // namespaces and can never collide with pane regions.
+        let overlay_hit = host.allocate_hit_region_id();
+        let overlay_focus = host.allocate_focus_id();
+
+        assert_ne!(Some(overlay_hit), host.pane_hit_region_id(LEFT));
+        assert_ne!(Some(overlay_focus), host.pane_focus_id(LEFT));
+
+        let snapshot = host.build_snapshot(Size::new(20.0, 10.0));
+        assert_eq!(snapshot.targets.pane_for_hit_region(overlay_hit), None);
+        assert_eq!(snapshot.targets.pane_for_focus_region(overlay_focus), None);
     }
 }

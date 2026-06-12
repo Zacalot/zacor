@@ -2,7 +2,7 @@ use crate::error::*;
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zacor_host::protocol::DaemonRefusal;
@@ -95,6 +95,24 @@ impl DaemonControl {
     }
 }
 
+/// RAII counter for live client connections. Held for a connection thread's
+/// whole lifetime so idle self-exit and drain-complete cannot fire while an
+/// invocation/dispatch session is still streaming.
+pub(super) struct ConnectionGuard(Arc<AtomicUsize>);
+
+impl ConnectionGuard {
+    pub(super) fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(counter)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub struct DaemonServer {
     home: PathBuf,
     services: Arc<Mutex<HashMap<String, ManagedService>>>,
@@ -102,6 +120,8 @@ pub struct DaemonServer {
     capabilities: Arc<capability_router::CapabilityRouter>,
     control: Arc<DaemonControl>,
     last_activity: Arc<Mutex<Instant>>,
+    active_connections: Arc<AtomicUsize>,
+    catalog_cache: Arc<Mutex<catalog::CatalogCache>>,
 }
 
 impl DaemonServer {
@@ -113,6 +133,8 @@ impl DaemonServer {
             capabilities: Arc::new(capability_router::CapabilityRouter::new()),
             control: Arc::new(DaemonControl::new()),
             last_activity: Arc::new(Mutex::new(Instant::now())),
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            catalog_cache: Arc::new(Mutex::new(catalog::CatalogCache::default())),
         }
     }
 
@@ -132,10 +154,17 @@ impl DaemonServer {
         let library_pools = self.library_pools.clone();
         let control = self.control.clone();
         let last_activity = self.last_activity.clone();
+        let active_connections = self.active_connections.clone();
         std::thread::Builder::new()
             .name("zr-health-monitor".into())
             .spawn(move || {
-                idle::health_monitor_loop(services, library_pools, control, last_activity)
+                idle::health_monitor_loop(
+                    services,
+                    library_pools,
+                    control,
+                    last_activity,
+                    active_connections,
+                )
             })
             .context("failed to spawn health monitor")?;
 
@@ -151,9 +180,14 @@ impl DaemonServer {
                     let control = self.control.clone();
                     let last_activity = self.last_activity.clone();
                     let home = self.home.clone();
+                    let guard = ConnectionGuard::new(self.active_connections.clone());
+                    let catalog_cache = self.catalog_cache.clone();
                     std::thread::Builder::new()
                         .name("zr-daemon-conn".into())
                         .spawn(move || {
+                            // Held for the thread's lifetime: long dispatch
+                            // sessions keep the daemon alive until they end.
+                            let _guard = guard;
                             if let Err(e) = server::handle_connection(
                                 stream,
                                 &services,
@@ -161,6 +195,7 @@ impl DaemonServer {
                                 &capabilities,
                                 &control,
                                 &last_activity,
+                                &catalog_cache,
                                 &home,
                             ) {
                                 eprintln!("daemon: connection error: {:#}", e);

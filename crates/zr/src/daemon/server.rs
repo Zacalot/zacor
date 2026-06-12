@@ -15,6 +15,7 @@ use super::module_cache::LibraryPool;
 use super::service_supervisor::{self, ManagedService};
 use super::{DAEMON_PORT, DaemonControl, DaemonRequest, DaemonResponse};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_connection(
     stream: TcpStream,
     services: &Arc<Mutex<HashMap<String, ManagedService>>>,
@@ -22,6 +23,7 @@ pub(super) fn handle_connection(
     capabilities: &Arc<CapabilityRouter>,
     control: &Arc<DaemonControl>,
     last_activity: &Arc<Mutex<Instant>>,
+    catalog_cache: &Arc<Mutex<catalog::CatalogCache>>,
     home: &Path,
 ) -> Result<()> {
     *last_activity.lock().unwrap() = Instant::now();
@@ -50,7 +52,10 @@ pub(super) fn handle_connection(
         "status" => service_supervisor::handle_status(services),
         "list-packages" => DaemonResponse {
             ok: true,
-            result: Some(serde_json::to_value(catalog::list_packages(home)?)?),
+            result: Some(serde_json::to_value(catalog::list_packages(
+                home,
+                &mut catalog_cache.lock().unwrap(),
+            )?)?),
             ..Default::default()
         },
         "describe-package" => {

@@ -85,11 +85,21 @@ pub enum KeymapResolution {
         sequence: KeySequence,
         function: FunctionName,
     },
+    /// No binding matched. `events` carries every swallowed key-down
+    /// (pending prefix plus the failing key) so the caller can replay them —
+    /// single-key binding lookup first, then literal insertion for
+    /// text-bearing keys, then drop. Never silently discard: under the
+    /// insertion-as-fallback model, discarded events are eaten user text.
     NotFound {
         sequence: KeySequence,
+        events: Vec<KeyDownEvent>,
     },
+    /// Escape cancelled a pending sequence. `events` carries the swallowed
+    /// prefix plus the escape key-down for the same replay contract
+    /// (Helix insert-mode precedent: cancelled chord keys are replayed).
     Cancelled {
         sequence: KeySequence,
+        events: Vec<KeyDownEvent>,
     },
 }
 
@@ -128,12 +138,57 @@ impl Keymap {
         Self::default()
     }
 
-    pub fn bind(&mut self, sequence: KeySequence, function: FunctionName) {
+    /// Bind a sequence, rejecting prefix/exact conflicts at bind time (the
+    /// Emacs `define-key` / Helix node-or-leaf discipline). A node is either a
+    /// prefix or a binding, never both, which makes ambiguity — and therefore
+    /// timeout machinery — structurally impossible. Rebinding the identical
+    /// sequence replaces the previous function.
+    pub fn bind(
+        &mut self,
+        sequence: KeySequence,
+        function: FunctionName,
+    ) -> Result<(), KeymapError> {
+        // Validate against the existing trie before mutating, so a rejected
+        // bind never leaves orphan prefix nodes behind.
+        let chords = sequence.chords();
+        let mut node = Some(&self.root);
+        for (index, chord) in chords.iter().enumerate() {
+            let Some(next) = node.and_then(|current| current.children.get(chord)) else {
+                // The rest of the path is fresh; no conflicts are possible.
+                node = None;
+                break;
+            };
+            let is_last = index + 1 == chords.len();
+            if !is_last && next.binding.is_some() {
+                return Err(KeymapError::new(
+                    "key sequence passes through an existing binding",
+                ));
+            }
+            if is_last && !next.children.is_empty() {
+                return Err(KeymapError::new(
+                    "key sequence is a prefix of an existing binding",
+                ));
+            }
+            node = Some(next);
+        }
+        let _ = node;
+
         let mut node = &mut self.root;
         for chord in sequence.chords {
             node = node.children.entry(chord).or_default();
         }
         node.binding = Some(function);
+        Ok(())
+    }
+
+    /// Exact single-chord binding lookup, used by the replay path. A chord
+    /// that is only a prefix does not match: replaying a key must never
+    /// re-enter pending state.
+    pub fn binding_for_chord(&self, chord: &BindingChord) -> Option<&FunctionName> {
+        self.root
+            .children
+            .get(chord)
+            .and_then(|node| node.binding.as_ref())
     }
 
     fn lookup(&self, sequence: &[BindingChord]) -> KeymapMatch<'_> {
@@ -155,9 +210,12 @@ impl Keymap {
     }
 }
 
+/// Pending state buffers full key-down events (not just binding chords) so a
+/// failed sequence can replay the swallowed keys with their produced text
+/// intact.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct KeymapResolver {
-    pending: Vec<BindingChord>,
+    pending: Vec<KeyDownEvent>,
 }
 
 impl KeymapResolver {
@@ -165,8 +223,22 @@ impl KeymapResolver {
         Self::default()
     }
 
-    pub fn pending(&self) -> &[BindingChord] {
-        &self.pending
+    pub fn pending_chords(&self) -> Vec<BindingChord> {
+        self.pending
+            .iter()
+            .map(BindingChord::from_key_down)
+            .collect()
+    }
+
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Drop any pending sequence. Must be called on focus change (Zed
+    /// precedent: pending keystrokes are invalidated when focus moves) —
+    /// a prefix typed in one context must not resolve in another.
+    pub fn clear_pending(&mut self) {
+        self.pending.clear();
     }
 
     pub fn resolve(
@@ -184,39 +256,54 @@ impl KeymapResolver {
         }
 
         if !self.pending.is_empty() && chord.key == Key::Named(NamedKey::Escape) {
-            let mut cancelled = std::mem::take(&mut self.pending);
-            cancelled.push(chord);
+            let mut events = std::mem::take(&mut self.pending);
+            events.push(key_down.clone());
             return KeymapResolution::Cancelled {
-                sequence: KeySequence { chords: cancelled },
+                sequence: sequence_of(&events),
+                events,
             };
         }
 
-        let mut attempted = self.pending.clone();
-        attempted.push(chord);
+        let mut attempted_chords = self.pending_chords();
+        attempted_chords.push(chord);
 
         for active_keymap in active_keymaps {
-            match active_keymap.keymap.lookup(&attempted) {
+            match active_keymap.keymap.lookup(&attempted_chords) {
                 KeymapMatch::Matched(function) => {
                     self.pending.clear();
                     return KeymapResolution::Matched {
-                        sequence: KeySequence { chords: attempted },
+                        sequence: KeySequence {
+                            chords: attempted_chords,
+                        },
                         function: function.clone(),
                     };
                 }
                 KeymapMatch::Pending => {
-                    self.pending = attempted.clone();
+                    self.pending.push(key_down.clone());
                     return KeymapResolution::Pending {
-                        sequence: KeySequence { chords: attempted },
+                        sequence: KeySequence {
+                            chords: attempted_chords,
+                        },
                     };
                 }
                 KeymapMatch::NotFound => {}
             }
         }
 
-        self.pending.clear();
+        let mut events = std::mem::take(&mut self.pending);
+        events.push(key_down.clone());
         KeymapResolution::NotFound {
-            sequence: KeySequence { chords: attempted },
+            sequence: KeySequence {
+                chords: attempted_chords,
+            },
+            events,
         }
+    }
+}
+
+fn sequence_of(events: &[KeyDownEvent]) -> KeySequence {
+    KeySequence {
+        chords: events.iter().map(BindingChord::from_key_down).collect(),
     }
 }
 
@@ -241,8 +328,8 @@ mod tests {
         }
     }
 
-    fn key_down(key: Key, text: Option<&str>) -> KeyboardEvent {
-        KeyboardEvent::KeyDown(KeyDownEvent {
+    fn key_down_event(key: Key, text: Option<&str>) -> KeyDownEvent {
+        KeyDownEvent {
             keystroke: Keystroke {
                 key,
                 text: text.map(ToOwned::to_owned),
@@ -251,7 +338,11 @@ mod tests {
             },
             repeat: false,
             prefer_text: false,
-        })
+        }
+    }
+
+    fn key_down(key: Key, text: Option<&str>) -> KeyboardEvent {
+        KeyboardEvent::KeyDown(key_down_event(key, text))
     }
 
     fn shifted_key_down(key: &str, text: &str) -> KeyboardEvent {
@@ -277,7 +368,8 @@ mod tests {
         map.bind(
             KeySequence::new(chords).unwrap(),
             FunctionName::new(function).unwrap(),
-        );
+        )
+        .unwrap();
     }
 
     fn active<'a>(name: &'a str, keymap: &'a Keymap) -> ActiveKeymap<'a> {
@@ -321,7 +413,7 @@ mod tests {
                 function: FunctionName::new("demo.hello").unwrap(),
             }
         );
-        assert!(resolver.pending().is_empty());
+        assert!(!resolver.has_pending());
     }
 
     #[test]
@@ -379,7 +471,7 @@ mod tests {
                 sequence: KeySequence::new(vec![char_chord("g")]).unwrap(),
             }
         );
-        assert_eq!(resolver.pending(), &[char_chord("g")]);
+        assert_eq!(resolver.pending_chords(), vec![char_chord("g")]);
     }
 
     #[test]
@@ -408,11 +500,11 @@ mod tests {
                 function: FunctionName::new("demo.goto").unwrap(),
             }
         );
-        assert!(resolver.pending().is_empty());
+        assert!(!resolver.has_pending());
     }
 
     #[test]
-    fn escape_cancels_pending_sequence() {
+    fn escape_cancels_pending_sequence_and_returns_swallowed_events() {
         let mut map = Keymap::new();
         bind(
             &mut map,
@@ -434,13 +526,17 @@ mod tests {
             resolution,
             KeymapResolution::Cancelled {
                 sequence: KeySequence::new(vec![char_chord("g"), escape_chord()]).unwrap(),
+                events: vec![
+                    key_down_event(Key::Character("g".to_string()), Some("g")),
+                    key_down_event(Key::Named(NamedKey::Escape), None),
+                ],
             }
         );
-        assert!(resolver.pending().is_empty());
+        assert!(!resolver.has_pending());
     }
 
     #[test]
-    fn not_found_clears_pending_sequence() {
+    fn not_found_clears_pending_sequence_and_returns_swallowed_events() {
         let mut map = Keymap::new();
         bind(
             &mut map,
@@ -462,9 +558,122 @@ mod tests {
             resolution,
             KeymapResolution::NotFound {
                 sequence: KeySequence::new(vec![char_chord("g"), char_chord("x")]).unwrap(),
+                events: vec![
+                    key_down_event(Key::Character("g".to_string()), Some("g")),
+                    key_down_event(Key::Character("x".to_string()), Some("x")),
+                ],
             }
         );
-        assert!(resolver.pending().is_empty());
+        assert!(!resolver.has_pending());
+    }
+
+    #[test]
+    fn clear_pending_drops_sequence_state() {
+        let mut map = Keymap::new();
+        bind(
+            &mut map,
+            vec![char_chord("g"), char_chord("d")],
+            "demo.goto",
+        );
+        let mut resolver = KeymapResolver::new();
+        let _ = resolver.resolve(
+            &key_down(Key::Character("g".to_string()), Some("g")),
+            &[active("global", &map)],
+        );
+        assert!(resolver.has_pending());
+
+        resolver.clear_pending();
+
+        assert!(!resolver.has_pending());
+        // After the clear, "d" alone is unbound: it must not complete the
+        // dropped sequence.
+        let resolution = resolver.resolve(
+            &key_down(Key::Character("d".to_string()), Some("d")),
+            &[active("global", &map)],
+        );
+        assert!(matches!(resolution, KeymapResolution::NotFound { .. }));
+    }
+
+    #[test]
+    fn bind_rejects_sequence_passing_through_existing_binding() {
+        let mut map = Keymap::new();
+        bind(&mut map, vec![char_chord("g")], "demo.first");
+
+        let error = map
+            .bind(
+                KeySequence::new(vec![char_chord("g"), char_chord("d")]).unwrap(),
+                FunctionName::new("demo.second").unwrap(),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.message(),
+            "key sequence passes through an existing binding"
+        );
+    }
+
+    #[test]
+    fn bind_rejects_sequence_that_is_prefix_of_existing_binding() {
+        let mut map = Keymap::new();
+        bind(
+            &mut map,
+            vec![char_chord("g"), char_chord("d")],
+            "demo.goto",
+        );
+
+        let error = map
+            .bind(
+                KeySequence::new(vec![char_chord("g")]).unwrap(),
+                FunctionName::new("demo.shadow").unwrap(),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.message(),
+            "key sequence is a prefix of an existing binding"
+        );
+    }
+
+    #[test]
+    fn rejected_bind_leaves_no_orphan_prefix_state() {
+        let mut map = Keymap::new();
+        bind(&mut map, vec![char_chord("g")], "demo.first");
+        let _ = map.bind(
+            KeySequence::new(vec![char_chord("g"), char_chord("d"), char_chord("x")]).unwrap(),
+            FunctionName::new("demo.rejected").unwrap(),
+        );
+
+        // The rejected bind must not have created prefix nodes that would make
+        // "g" report Pending instead of its exact match.
+        let mut resolver = KeymapResolver::new();
+        let resolution = resolver.resolve(
+            &key_down(Key::Character("g".to_string()), Some("g")),
+            &[active("global", &map)],
+        );
+
+        assert_eq!(
+            resolution.matched_function(),
+            Some(&FunctionName::new("demo.first").unwrap())
+        );
+    }
+
+    #[test]
+    fn binding_for_chord_matches_exact_bindings_only() {
+        let mut map = Keymap::new();
+        bind(&mut map, vec![char_chord("x")], "demo.exact");
+        bind(
+            &mut map,
+            vec![char_chord("g"), char_chord("d")],
+            "demo.goto",
+        );
+
+        assert_eq!(
+            map.binding_for_chord(&char_chord("x")),
+            Some(&FunctionName::new("demo.exact").unwrap())
+        );
+        // "g" is only a prefix: replay lookups must not re-enter pending.
+        assert_eq!(map.binding_for_chord(&char_chord("g")), None);
+        assert_eq!(map.binding_for_chord(&char_chord("z")), None);
     }
 
     #[test]
@@ -532,9 +741,14 @@ mod tests {
         };
         let not_found = KeymapResolution::NotFound {
             sequence: KeySequence::new(vec![char_chord("z")]).unwrap(),
+            events: vec![key_down_event(Key::Character("z".to_string()), Some("z"))],
         };
         let cancelled = KeymapResolution::Cancelled {
             sequence: KeySequence::new(vec![char_chord("g"), escape_chord()]).unwrap(),
+            events: vec![
+                key_down_event(Key::Character("g".to_string()), Some("g")),
+                key_down_event(Key::Named(NamedKey::Escape), None),
+            ],
         };
 
         assert_eq!(KeymapResolution::Ignored.matched_function(), None);
@@ -583,6 +797,7 @@ mod tests {
                     location: KeyLocation::Standard,
                 }])
                 .unwrap(),
+                events: vec![key_down_event(Key::Character("z".to_string()), Some("z"))],
             }
         );
     }

@@ -1,5 +1,8 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use crate::host::BufferId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionError {
@@ -56,18 +59,22 @@ pub struct FunctionMetadata {
     pub source: FunctionSource,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A Rust-native function handler. Handlers never receive host state; they
+/// describe their intent as effects through the context (the single
+/// chokepoint where capability gating can later attach as policy).
+pub type RustHandler = Arc<dyn Fn(&mut FunctionContext) + 'static>;
+
 enum FunctionHandler {
+    Rust(RustHandler),
     Lua(LuaFunctionId),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 struct RegisteredFunction {
     metadata: FunctionMetadata,
     handler: FunctionHandler,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Default)]
 pub struct FunctionRegistry {
     entries: BTreeMap<FunctionName, RegisteredFunction>,
 }
@@ -75,6 +82,20 @@ pub struct FunctionRegistry {
 impl FunctionRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn register_rust(&mut self, name: FunctionName, handler: RustHandler) -> bool {
+        let previous = self.entries.insert(
+            name.clone(),
+            RegisteredFunction {
+                metadata: FunctionMetadata {
+                    name,
+                    source: FunctionSource::Rust,
+                },
+                handler: FunctionHandler::Rust(handler),
+            },
+        );
+        previous.is_some()
     }
 
     pub fn register_lua(&mut self, name: FunctionName, id: LuaFunctionId) -> Option<LuaFunctionId> {
@@ -91,6 +112,7 @@ impl FunctionRegistry {
 
         previous.and_then(|registered| match registered.handler {
             FunctionHandler::Lua(id) => Some(id),
+            FunctionHandler::Rust(_) => None,
         })
     }
 
@@ -107,8 +129,18 @@ impl FunctionRegistry {
     pub fn lua_function_id(&self, name: &str) -> Option<LuaFunctionId> {
         self.entries
             .get(name)
-            .map(|registered| match registered.handler {
-                FunctionHandler::Lua(id) => id,
+            .and_then(|registered| match registered.handler {
+                FunctionHandler::Lua(id) => Some(id),
+                FunctionHandler::Rust(_) => None,
+            })
+    }
+
+    pub fn rust_handler(&self, name: &str) -> Option<RustHandler> {
+        self.entries
+            .get(name)
+            .and_then(|registered| match &registered.handler {
+                FunctionHandler::Rust(handler) => Some(handler.clone()),
+                FunctionHandler::Lua(_) => None,
             })
     }
 
@@ -121,9 +153,21 @@ impl FunctionRegistry {
     }
 }
 
+/// A side effect described by a function and applied by the runtime after the
+/// call returns (buffered-then-committed, never reentrant). Functions never
+/// mutate host/render/input state directly — effects are the only door, which
+/// keeps the surface handle-shaped (Neovim `nvim_buf_*` precedent) and gives
+/// capability gating a single later attachment point (Zed granter precedent).
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FunctionEffect {
+    BufferAppend { buffer: BufferId, text: String },
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FunctionContext {
     logs: Vec<String>,
+    effects: Vec<FunctionEffect>,
 }
 
 impl FunctionContext {
@@ -135,19 +179,40 @@ impl FunctionContext {
         self.logs.push(message.into());
     }
 
+    /// Queue an append to a local buffer, applied by the runtime after the
+    /// function returns. The target is revalidated at apply time.
+    pub fn buf_append(&mut self, buffer: BufferId, text: impl Into<String>) {
+        self.effects.push(FunctionEffect::BufferAppend {
+            buffer,
+            text: text.into(),
+        });
+    }
+
+    pub fn push_effect(&mut self, effect: FunctionEffect) {
+        self.effects.push(effect);
+    }
+
     pub fn finish(self) -> FunctionOutcome {
-        FunctionOutcome { logs: self.logs }
+        FunctionOutcome {
+            logs: self.logs,
+            effects: self.effects,
+        }
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FunctionOutcome {
     logs: Vec<String>,
+    effects: Vec<FunctionEffect>,
 }
 
 impl FunctionOutcome {
     pub fn logs(&self) -> &[String] {
         &self.logs
+    }
+
+    pub fn effects(&self) -> &[FunctionEffect] {
+        &self.effects
     }
 }
 
@@ -155,6 +220,75 @@ pub trait FunctionInvoker {
     type Error;
 
     fn invoke_function(&self, name: &FunctionName) -> Result<FunctionOutcome, Self::Error>;
+}
+
+/// One invocation's name and result, as reported in turn results.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FunctionInvocation {
+    pub function: FunctionName,
+    pub result: Result<FunctionOutcome, FunctionError>,
+}
+
+/// Routes function invocations: Rust handlers first (its own registry), then
+/// an optional delegate invoker (in practice the `LuaHost`). Name collisions
+/// resolve Rust-first.
+#[derive(Default)]
+pub struct FunctionRouter {
+    registry: FunctionRegistry,
+    delegate: Option<Box<dyn Fn(&FunctionName) -> Result<FunctionOutcome, FunctionError>>>,
+}
+
+impl FunctionRouter {
+    pub fn new(registry: FunctionRegistry) -> Self {
+        Self {
+            registry,
+            delegate: None,
+        }
+    }
+
+    pub fn with_delegate<I>(mut self, invoker: I) -> Self
+    where
+        I: FunctionInvoker + 'static,
+        I::Error: std::fmt::Debug,
+    {
+        self.delegate = Some(Box::new(move |name| {
+            invoker
+                .invoke_function(name)
+                .map_err(|error| FunctionError::new(format!("{error:?}")))
+        }));
+        self
+    }
+
+    pub fn registry(&self) -> &FunctionRegistry {
+        &self.registry
+    }
+
+    pub fn registry_mut(&mut self) -> &mut FunctionRegistry {
+        &mut self.registry
+    }
+
+    pub fn invoke(&self, name: &FunctionName) -> Result<FunctionOutcome, FunctionError> {
+        if let Some(handler) = self.registry.rust_handler(name.as_str()) {
+            let mut context = FunctionContext::new();
+            handler(&mut context);
+            return Ok(context.finish());
+        }
+        if let Some(delegate) = &self.delegate {
+            return delegate(name);
+        }
+        Err(FunctionError::new(format!(
+            "unknown function: {}",
+            name.as_str()
+        )))
+    }
+}
+
+impl FunctionInvoker for FunctionRouter {
+    type Error = FunctionError;
+
+    fn invoke_function(&self, name: &FunctionName) -> Result<FunctionOutcome, Self::Error> {
+        self.invoke(name)
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +345,102 @@ mod tests {
         let outcome = context.finish();
 
         assert_eq!(outcome.logs(), &["first".to_string(), "second".to_string()]);
+    }
+
+    #[test]
+    fn function_context_queues_effects() {
+        let mut context = FunctionContext::new();
+        context.buf_append(BufferId(3), "hello");
+
+        let outcome = context.finish();
+
+        assert_eq!(
+            outcome.effects(),
+            &[FunctionEffect::BufferAppend {
+                buffer: BufferId(3),
+                text: "hello".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn registry_registers_rust_handler() {
+        let mut registry = FunctionRegistry::new();
+        let name = FunctionName::new("demo.rust").unwrap();
+
+        let replaced = registry.register_rust(name.clone(), Arc::new(|_| {}));
+
+        assert!(!replaced);
+        assert!(registry.contains("demo.rust"));
+        assert_eq!(
+            registry.metadata("demo.rust").unwrap().source,
+            FunctionSource::Rust
+        );
+        assert!(registry.rust_handler("demo.rust").is_some());
+        assert_eq!(registry.lua_function_id("demo.rust"), None);
+    }
+
+    #[test]
+    fn router_invokes_rust_handler_and_collects_effects() {
+        let mut registry = FunctionRegistry::new();
+        registry.register_rust(
+            FunctionName::new("demo.stamp").unwrap(),
+            Arc::new(|context| {
+                context.log("stamped");
+                context.buf_append(BufferId(1), "x");
+            }),
+        );
+        let router = FunctionRouter::new(registry);
+
+        let outcome = router
+            .invoke(&FunctionName::new("demo.stamp").unwrap())
+            .unwrap();
+
+        assert_eq!(outcome.logs(), &["stamped".to_string()]);
+        assert_eq!(outcome.effects().len(), 1);
+    }
+
+    #[test]
+    fn router_reports_unknown_function() {
+        let router = FunctionRouter::new(FunctionRegistry::new());
+
+        let error = router
+            .invoke(&FunctionName::new("missing").unwrap())
+            .unwrap_err();
+
+        assert_eq!(error.message(), "unknown function: missing");
+    }
+
+    #[test]
+    fn router_falls_back_to_delegate_rust_first() {
+        struct Delegate;
+        impl FunctionInvoker for Delegate {
+            type Error = FunctionError;
+            fn invoke_function(
+                &self,
+                _name: &FunctionName,
+            ) -> Result<FunctionOutcome, Self::Error> {
+                let mut context = FunctionContext::new();
+                context.log("from delegate");
+                Ok(context.finish())
+            }
+        }
+
+        let mut registry = FunctionRegistry::new();
+        registry.register_rust(
+            FunctionName::new("demo.shared").unwrap(),
+            Arc::new(|context| context.log("from rust")),
+        );
+        let router = FunctionRouter::new(registry).with_delegate(Delegate);
+
+        let rust = router
+            .invoke(&FunctionName::new("demo.shared").unwrap())
+            .unwrap();
+        let delegated = router
+            .invoke(&FunctionName::new("demo.lua_only").unwrap())
+            .unwrap();
+
+        assert_eq!(rust.logs(), &["from rust".to_string()]);
+        assert_eq!(delegated.logs(), &["from delegate".to_string()]);
     }
 }

@@ -3,19 +3,70 @@ use crate::package_definition::{
     ArgType, ArgumentDefinition, CommandDefinition, InputType, OutputDeclaration, PackageDefinition,
 };
 use crate::receipt::{self, Receipt};
+use std::collections::HashMap;
 use std::path::Path;
+use std::time::SystemTime;
 use zacor_protocol::daemon_catalog::{
     ArgumentDescriptor, ArgumentType, CommandDescriptor, InputKind, InstalledPackageSummary,
     OutputCardinality, OutputDescriptor, OutputDisplay, PackageDescriptor,
 };
 
-pub(super) fn list_packages(home: &Path) -> Result<Vec<InstalledPackageSummary>> {
+/// Per-package description cache for the `list-packages` hot path (a command
+/// palette calls it per open). Loading a description means extracting the
+/// manifest from the store — potentially reading a wasm binary — so cache it
+/// keyed by receipt-file mtime + current version: any install/enable/disable
+/// rewrites the receipt and invalidates the entry. `describe-package` stays
+/// uncached (full descriptors, called per selection, must be fresh).
+#[derive(Default)]
+pub(super) struct CatalogCache {
+    entries: HashMap<String, CachedDescription>,
+}
+
+struct CachedDescription {
+    receipt_mtime: SystemTime,
+    version: String,
+    description: Option<String>,
+}
+
+pub(super) fn list_packages(
+    home: &Path,
+    cache: &mut CatalogCache,
+) -> Result<Vec<InstalledPackageSummary>> {
     let receipts = receipt::list_all(home)?;
     let mut packages = Vec::with_capacity(receipts.len());
     for (name, receipt) in receipts {
-        let description = crate::wasm_manifest::load_from_store(home, &name, &receipt.current)
-            .ok()
-            .and_then(|definition| definition.description);
+        let receipt_mtime = std::fs::metadata(crate::paths::receipt_path(home, &name))
+            .and_then(|metadata| metadata.modified())
+            .ok();
+
+        let cached = receipt_mtime.and_then(|mtime| {
+            cache
+                .entries
+                .get(&name)
+                .filter(|entry| entry.receipt_mtime == mtime && entry.version == receipt.current)
+        });
+
+        let description = match cached {
+            Some(entry) => entry.description.clone(),
+            None => {
+                let description =
+                    crate::wasm_manifest::load_from_store(home, &name, &receipt.current)
+                        .ok()
+                        .and_then(|definition| definition.description);
+                if let Some(mtime) = receipt_mtime {
+                    cache.entries.insert(
+                        name.clone(),
+                        CachedDescription {
+                            receipt_mtime: mtime,
+                            version: receipt.current.clone(),
+                            description: description.clone(),
+                        },
+                    );
+                }
+                description
+            }
+        };
+
         packages.push(InstalledPackageSummary {
             name,
             version: receipt.current,
@@ -23,6 +74,9 @@ pub(super) fn list_packages(home: &Path) -> Result<Vec<InstalledPackageSummary>>
             description,
         });
     }
+    cache
+        .entries
+        .retain(|name, _| packages.iter().any(|package| &package.name == name));
     Ok(packages)
 }
 
@@ -157,7 +211,7 @@ mod tests {
             "name: alpha\nversion: \"0.2.0\"\ndescription: Alpha package\ncommands:\n  default: {}\n",
         );
 
-        let packages = list_packages(home).unwrap();
+        let packages = list_packages(home, &mut CatalogCache::default()).unwrap();
 
         assert_eq!(packages.len(), 2);
         assert_eq!(packages[0].name, "alpha");
@@ -165,6 +219,73 @@ mod tests {
         assert!(!packages[0].active);
         assert_eq!(packages[0].description.as_deref(), Some("Alpha package"));
         assert_eq!(packages[1].name, "beta");
+    }
+
+    #[test]
+    fn list_packages_caches_descriptions_until_receipt_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        write_package(
+            home,
+            "tool",
+            "1.0.0",
+            true,
+            "name: tool\nversion: \"1.0.0\"\ndescription: First description\ncommands:\n  default: {}\n",
+        );
+        let mut cache = CatalogCache::default();
+
+        let first = list_packages(home, &mut cache).unwrap();
+        assert_eq!(first[0].description.as_deref(), Some("First description"));
+
+        // Change the store definition WITHOUT touching the receipt: the
+        // cached description is intentionally served (the cache key is the
+        // receipt, which every install/enable/disable rewrites).
+        std::fs::write(
+            paths::definition_path(home, "tool", "1.0.0"),
+            "name: tool\nversion: \"1.0.0\"\ndescription: Second description\ncommands:\n  default: {}\n",
+        )
+        .unwrap();
+        let cached = list_packages(home, &mut cache).unwrap();
+        assert_eq!(cached[0].description.as_deref(), Some("First description"));
+
+        // Rewriting the receipt (with a bumped mtime) invalidates the entry.
+        let receipt = crate::receipt::read(home, "tool").unwrap().unwrap();
+        crate::receipt::write(home, "tool", &receipt).unwrap();
+        let receipt_file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(paths::receipt_path(home, "tool"))
+            .unwrap();
+        receipt_file
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))
+            .unwrap();
+
+        let refreshed = list_packages(home, &mut cache).unwrap();
+        assert_eq!(
+            refreshed[0].description.as_deref(),
+            Some("Second description")
+        );
+    }
+
+    #[test]
+    fn cache_prunes_removed_packages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        write_package(
+            home,
+            "gone",
+            "1.0.0",
+            true,
+            "name: gone\nversion: \"1.0.0\"\ndescription: Gone soon\ncommands:\n  default: {}\n",
+        );
+        let mut cache = CatalogCache::default();
+        let _ = list_packages(home, &mut cache).unwrap();
+        assert_eq!(cache.entries.len(), 1);
+
+        std::fs::remove_file(paths::receipt_path(home, "gone")).unwrap();
+
+        let packages = list_packages(home, &mut cache).unwrap();
+        assert!(packages.is_empty());
+        assert!(cache.entries.is_empty());
     }
 
     #[test]

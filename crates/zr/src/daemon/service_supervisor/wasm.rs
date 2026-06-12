@@ -309,6 +309,39 @@ fn handle_wasm_service_connection(
     Ok(())
 }
 
+/// True when the JSONL frame is a package-protocol `done` message. Parses the
+/// line rather than substring-matching: an output record whose *string value*
+/// contains `"type":"done"` must not terminate the connection.
 pub(in crate::daemon) fn is_done_frame(line: &str) -> bool {
-    line.contains("\"type\":\"done\"") || line.contains("\"type\": \"done\"")
+    serde_json::from_str::<serde_json::Value>(line)
+        .map(|value| value.get("type").and_then(|tag| tag.as_str()) == Some("done"))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_done_frame;
+
+    #[test]
+    fn done_frames_are_detected() {
+        assert!(is_done_frame(r#"{"type":"done","exit_code":0}"#));
+        assert!(is_done_frame(r#"{ "type": "done", "exit_code": 1 }"#));
+    }
+
+    #[test]
+    fn output_frames_are_not_done() {
+        assert!(!is_done_frame(r#"{"type":"output","record":{"v":1}}"#));
+    }
+
+    #[test]
+    fn embedded_done_text_does_not_spoof_termination() {
+        assert!(!is_done_frame(
+            r#"{"type":"output","record":{"note":"contains \"type\":\"done\" literally"}}"#
+        ));
+    }
+
+    #[test]
+    fn invalid_json_is_not_done() {
+        assert!(!is_done_frame("not json"));
+    }
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,11 +25,29 @@ fn idle_timeout() -> Option<Duration> {
     }
 }
 
+/// Idle self-exit fires only when there is truly nothing left to serve:
+/// no managed services, no warm library instances, **and no live client
+/// connections** — a long-running streamed invocation holds a connection
+/// guard and must never be killed by the idle policy.
+pub(super) fn should_idle_exit(
+    service_count: usize,
+    library_instance_count: usize,
+    active_connections: usize,
+    idle_for: Duration,
+    timeout: Duration,
+) -> bool {
+    service_count == 0
+        && library_instance_count == 0
+        && active_connections == 0
+        && idle_for >= timeout
+}
+
 pub(super) fn health_monitor_loop(
     services: Arc<Mutex<HashMap<String, ManagedService>>>,
     library_pools: Arc<Mutex<HashMap<String, LibraryPool>>>,
     control: Arc<DaemonControl>,
     last_activity: Arc<Mutex<Instant>>,
+    active_connections: Arc<AtomicUsize>,
 ) {
     loop {
         std::thread::sleep(HEALTH_CHECK_INTERVAL);
@@ -49,13 +68,11 @@ pub(super) fn health_monitor_loop(
                 .map(|pool| pool.instances.len())
                 .sum::<usize>()
         };
+        let connections = active_connections.load(Ordering::SeqCst);
 
-        if names.is_empty()
-            && library_pool_count == 0
-            && let Some(timeout) = idle_timeout()
-        {
+        if let Some(timeout) = idle_timeout() {
             let idle = last_activity.lock().unwrap().elapsed();
-            if idle >= timeout {
+            if should_idle_exit(names.len(), library_pool_count, connections, idle, timeout) {
                 eprintln!("daemon: idle for {:?} with no services — exiting", idle);
                 control.shutdown_all();
                 let _ = TcpStream::connect(format!("127.0.0.1:{}", DAEMON_PORT));
@@ -69,7 +86,7 @@ pub(super) fn health_monitor_loop(
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(DEFAULT_DRAIN_TIMEOUT_SECS);
             let drain_timeout = Duration::from_secs(drain_timeout_secs);
-            let no_services = names.is_empty() && library_pool_count == 0;
+            let no_services = names.is_empty() && library_pool_count == 0 && connections == 0;
             let drain_expired = control
                 .drain_started_at()
                 .is_some_and(|started| started.elapsed() >= drain_timeout);

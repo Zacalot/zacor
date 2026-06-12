@@ -27,6 +27,102 @@ fn test_service_state_display() {
 }
 
 #[test]
+fn idle_exit_requires_no_live_connections() {
+    use super::idle::should_idle_exit;
+    let timeout = Duration::from_secs(60);
+    let long_idle = Duration::from_secs(120);
+
+    assert!(should_idle_exit(0, 0, 0, long_idle, timeout));
+    // A live connection (e.g. a streaming invocation) must block idle exit
+    // even when last_activity is ancient: activity is touched only at
+    // connection start.
+    assert!(!should_idle_exit(0, 0, 1, long_idle, timeout));
+    assert!(!should_idle_exit(1, 0, 0, long_idle, timeout));
+    assert!(!should_idle_exit(0, 1, 0, long_idle, timeout));
+    assert!(!should_idle_exit(0, 0, 0, Duration::from_secs(10), timeout));
+}
+
+fn invoke_round_trip(home: &std::path::Path, request_json: &str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let client = TcpStream::connect(addr).expect("connect");
+    let (server_stream, _) = listener.accept().expect("accept");
+    let control = Arc::new(DaemonControl::new());
+
+    let request: DaemonRequest = serde_json::from_str(request_json).expect("request");
+    super::invoke::handle_command_invoke(server_stream, request, &control, home)
+        .expect("handle invoke");
+
+    let mut line = String::new();
+    std::io::BufReader::new(client)
+        .read_line(&mut line)
+        .expect("read ack");
+    line
+}
+
+#[test]
+fn invoke_command_refuses_missing_package_before_ack() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+
+    let ack = invoke_round_trip(
+        tmp.path(),
+        r#"{"request":"invoke-command","invoke":{"package":"ghost","command":"default","context":{"cwd":"."}}}"#,
+    );
+
+    assert!(ack.contains("\"ok\":false"), "ack: {ack}");
+    assert!(ack.contains("package_not_found"), "ack: {ack}");
+}
+
+#[test]
+fn invoke_command_refuses_disabled_package_before_ack() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let mut receipt = crate::receipt::Receipt::new(
+        "0.1.0".to_string(),
+        crate::receipt::SourceRecord::Local {
+            path: "/tmp/test".to_string(),
+        },
+    );
+    receipt.active = false;
+    crate::receipt::write(tmp.path(), "sleepy", &receipt).expect("write receipt");
+
+    let ack = invoke_round_trip(
+        tmp.path(),
+        r#"{"request":"invoke-command","invoke":{"package":"sleepy","command":"default","context":{"cwd":"."}}}"#,
+    );
+
+    assert!(ack.contains("\"ok\":false"), "ack: {ack}");
+    assert!(ack.contains("disabled"), "ack: {ack}");
+}
+
+#[test]
+fn invoke_command_participates_in_version_handshake() {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let client = TcpStream::connect(addr).expect("connect");
+    let (server_stream, _) = listener.accept().expect("accept");
+    let control = Arc::new(DaemonControl::new());
+
+    let request: DaemonRequest = serde_json::from_str(
+        r#"{"request":"invoke-command","zacor_version":"999.0.0","invoke":{"package":"echo","command":"default","context":{"cwd":"."}}}"#,
+    )
+    .expect("request");
+    super::invoke::handle_command_invoke(server_stream, request, &control, tmp.path())
+        .expect("handle invoke");
+
+    let mut line = String::new();
+    std::io::BufReader::new(client)
+        .read_line(&mut line)
+        .expect("read ack");
+
+    assert!(line.contains("version_mismatch"), "ack: {line}");
+    assert!(
+        control.is_dispatch_draining(),
+        "mismatch must push the daemon into drain"
+    );
+}
+
+#[test]
 fn dispatch_drain_preserves_version_mismatch_reason() {
     let control = DaemonControl::new();
     control.begin_dispatch_drain(DaemonRefusal::VersionMismatch {

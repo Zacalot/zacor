@@ -8,6 +8,12 @@ pub struct CommandInvocationRequest {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub args: BTreeMap<String, String>,
     pub context: InvocationContext,
+    /// Run to completion even if the client disconnects mid-stream; errors
+    /// then sink to the daemon log instead of the (gone) client. Additive and
+    /// default-false: requests without the field keep cancel-on-disconnect
+    /// semantics.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,12 +62,37 @@ mod tests {
             context: InvocationContext {
                 cwd: "/workspace".into(),
             },
+            detach: false,
         };
 
         let json = serde_json::to_string(&request).unwrap();
         let parsed: CommandInvocationRequest = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed, request);
+        assert!(
+            !json.contains("detach"),
+            "default detach stays off the wire"
+        );
+    }
+
+    #[test]
+    fn command_invocation_request_detach_defaults_false_and_roundtrips() {
+        let parsed: CommandInvocationRequest =
+            serde_json::from_str(r#"{"package":"echo","command":"default","context":{"cwd":"."}}"#)
+                .unwrap();
+        assert!(!parsed.detach);
+
+        let request = CommandInvocationRequest {
+            package: "watch".into(),
+            command: "default".into(),
+            args: BTreeMap::new(),
+            context: InvocationContext { cwd: ".".into() },
+            detach: true,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"detach\":true"));
+        let reparsed: CommandInvocationRequest = serde_json::from_str(&json).unwrap();
+        assert!(reparsed.detach);
     }
 
     #[test]

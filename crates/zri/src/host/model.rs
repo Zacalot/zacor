@@ -222,30 +222,21 @@ impl ViewStore {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Retained shell/root-frame identity. Selection state deliberately does not
+/// live here: the focus state in `HostRuntime` is the single selection
+/// authority, and the active pane / selected view are derived from it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InterfaceFrame {
     id: InterfaceFrameId,
-    selected_view: Option<ViewId>,
 }
 
 impl InterfaceFrame {
     pub fn new(id: InterfaceFrameId) -> Self {
-        Self {
-            id,
-            selected_view: None,
-        }
+        Self { id }
     }
 
     pub fn id(&self) -> InterfaceFrameId {
         self.id
-    }
-
-    pub fn selected_view(&self) -> Option<ViewId> {
-        self.selected_view
-    }
-
-    pub fn set_selected_view(&mut self, view: Option<ViewId>) {
-        self.selected_view = view;
     }
 }
 
@@ -296,13 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn interface_frame_tracks_selected_view() {
-        let mut frame = InterfaceFrame::new(InterfaceFrameId(3));
-        let view = ViewId(9);
-
-        frame.set_selected_view(Some(view));
+    fn interface_frame_keeps_identity_only() {
+        let frame = InterfaceFrame::new(InterfaceFrameId(3));
 
         assert_eq!(frame.id(), InterfaceFrameId(3));
-        assert_eq!(frame.selected_view(), Some(view));
     }
 }

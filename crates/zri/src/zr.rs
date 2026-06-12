@@ -9,6 +9,12 @@ use zacor_protocol::daemon_invoke::{CommandInvocationRequest, InvocationEvent};
 
 const DEFAULT_DAEMON_ADDR: &str = "127.0.0.1:19100";
 
+/// Client runtime version sent with every request so the daemon's
+/// version-handshake/drain machinery applies to semantic requests too
+/// (describe-don't-negotiate near term: the daemon refuses on mismatch and
+/// the client surfaces a typed error).
+const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub struct ZrClient {
     addr: String,
 }
@@ -24,14 +30,18 @@ impl ZrClient {
 
     pub fn list_packages(&self) -> Result<Vec<InstalledPackageSummary>, ZrClientError> {
         self.send_request(
-            &serde_json::json!({"request": "list-packages"}),
+            &serde_json::json!({"request": "list-packages", "zacor_version": CLIENT_VERSION}),
             "list-packages",
         )
     }
 
     pub fn describe_package(&self, name: &str) -> Result<PackageDescriptor, ZrClientError> {
         self.send_request(
-            &serde_json::json!({"request": "describe-package", "name": name}),
+            &serde_json::json!({
+                "request": "describe-package",
+                "name": name,
+                "zacor_version": CLIENT_VERSION,
+            }),
             "describe-package",
         )
     }
@@ -40,55 +50,13 @@ impl ZrClient {
         &self,
         request: CommandInvocationRequest,
     ) -> Result<InvocationStream, ZrClientError> {
-        let mut stream =
-            TcpStream::connect(&self.addr).map_err(|error| ZrClientError::Connect {
-                addr: self.addr.clone(),
-                source: error,
-            })?;
-
-        let request_json = serde_json::to_string(&serde_json::json!({
+        let payload = serde_json::json!({
             "request": "invoke-command",
             "invoke": request,
-        }))
-        .map_err(|error| ZrClientError::Serialize {
-            request: "invoke-command".to_string(),
-            source: error,
-        })?;
-        writeln!(stream, "{}", request_json).map_err(|error| ZrClientError::Write {
-            request: "invoke-command".to_string(),
-            source: error,
-        })?;
-        stream.flush().map_err(|error| ZrClientError::Write {
-            request: "invoke-command".to_string(),
-            source: error,
-        })?;
-
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|error| ZrClientError::Read {
-                request: "invoke-command".to_string(),
-                source: error,
-            })?;
-
-        let response: DaemonEnvelope =
-            serde_json::from_str(line.trim()).map_err(|error| ZrClientError::Parse {
-                request: "invoke-command".to_string(),
-                source: error,
-            })?;
-
-        if !response.ok {
-            if let Some(refusal) = response.refusal {
-                return Err(ZrClientError::DaemonRefusal(refusal));
-            }
-            return Err(ZrClientError::DaemonError(
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown daemon error".to_string()),
-            ));
-        }
-
+            "zacor_version": CLIENT_VERSION,
+        });
+        let (response, reader) = self.exchange(&payload, "invoke-command")?;
+        check_envelope(response, "invoke-command")?;
         Ok(InvocationStream { reader })
     }
 
@@ -97,6 +65,23 @@ impl ZrClient {
         request: &serde_json::Value,
         request_name: &str,
     ) -> Result<T, ZrClientError> {
+        let (response, _reader) = self.exchange(request, request_name)?;
+        let response = check_envelope(response, request_name)?;
+        let result = response.result.ok_or(ZrClientError::MissingResult {
+            request: request_name.to_string(),
+        })?;
+        serde_json::from_value(result).map_err(|error| ZrClientError::Decode {
+            request: request_name.to_string(),
+            source: error,
+        })
+    }
+
+    /// Connect, write one request line, read the response envelope line.
+    fn exchange(
+        &self,
+        request: &serde_json::Value,
+        request_name: &str,
+    ) -> Result<(DaemonEnvelope, BufReader<TcpStream>), ZrClientError> {
         let mut stream =
             TcpStream::connect(&self.addr).map_err(|error| ZrClientError::Connect {
                 addr: self.addr.clone(),
@@ -131,32 +116,42 @@ impl ZrClient {
                 request: request_name.to_string(),
                 source: error,
             })?;
-
-        if !response.ok {
-            if let Some(refusal) = response.refusal {
-                return Err(ZrClientError::DaemonRefusal(refusal));
-            }
-            return Err(ZrClientError::DaemonError(
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown daemon error".to_string()),
-            ));
-        }
-
-        let result = response.result.ok_or(ZrClientError::MissingResult {
-            request: request_name.to_string(),
-        })?;
-        serde_json::from_value(result).map_err(|error| ZrClientError::Decode {
-            request: request_name.to_string(),
-            source: error,
-        })
+        Ok((response, reader))
     }
+}
+
+fn check_envelope(
+    response: DaemonEnvelope,
+    _request_name: &str,
+) -> Result<DaemonEnvelope, ZrClientError> {
+    if response.ok {
+        return Ok(response);
+    }
+    if let Some(refusal) = response.refusal {
+        return Err(match refusal {
+            DaemonRefusal::VersionMismatch { daemon, client } => {
+                ZrClientError::VersionMismatch { daemon, client }
+            }
+            other => ZrClientError::DaemonRefusal(other),
+        });
+    }
+    Err(ZrClientError::DaemonError(
+        response
+            .error
+            .unwrap_or_else(|| "unknown daemon error".to_string()),
+    ))
 }
 
 #[derive(Debug)]
 pub struct InvocationStream {
     reader: BufReader<TcpStream>,
 }
+
+/// Event types this client version understands. Lines with any other `type`
+/// tag are skipped: the daemon protocol contract is additive-only, and a
+/// client obligated to tolerate unknown events is what makes "events may only
+/// be extended" workable (Neovim api-contract precedent).
+const KNOWN_EVENT_TYPES: &[&str] = &["output", "progress", "message", "done"];
 
 impl InvocationStream {
     pub fn next_event(&mut self) -> Result<Option<InvocationEvent>, ZrClientError> {
@@ -173,9 +168,24 @@ impl InvocationStream {
             if trimmed.is_empty() {
                 continue;
             }
-            let event = serde_json::from_str(trimmed)
+            let value: serde_json::Value = serde_json::from_str(trimmed)
                 .map_err(|error| ZrClientError::ParseEvent { source: error })?;
-            return Ok(Some(event));
+            let event_type = value.get("type").and_then(|tag| tag.as_str());
+            match event_type {
+                Some(tag) if KNOWN_EVENT_TYPES.contains(&tag) => {
+                    let event = serde_json::from_value(value)
+                        .map_err(|error| ZrClientError::ParseEvent { source: error })?;
+                    return Ok(Some(event));
+                }
+                // Unknown event type: a newer daemon extended the stream.
+                // Skip it and keep reading.
+                Some(_) => continue,
+                None => {
+                    return Err(ZrClientError::ParseEvent {
+                        source: serde::de::Error::custom("invocation event missing `type` tag"),
+                    });
+                }
+            }
         }
     }
 }
@@ -214,6 +224,13 @@ pub enum ZrClientError {
     },
     DaemonRefusal(DaemonRefusal),
     DaemonError(String),
+    /// The daemon refused because of a runtime version mismatch — a distinct
+    /// variant so the UI can say "restart the daemon" instead of showing a
+    /// generic refusal.
+    VersionMismatch {
+        daemon: String,
+        client: String,
+    },
     MissingResult {
         request: String,
     },
@@ -266,6 +283,13 @@ impl fmt::Display for ZrClientError {
                 write!(formatter, "daemon refused request: {:?}", refusal)
             }
             Self::DaemonError(message) => formatter.write_str(message),
+            Self::VersionMismatch { daemon, client } => {
+                write!(
+                    formatter,
+                    "daemon version mismatch (daemon {}, client {}); restart the daemon",
+                    daemon, client
+                )
+            }
             Self::MissingResult { request } => {
                 write!(
                     formatter,
@@ -342,6 +366,7 @@ mod tests {
             command: "default".into(),
             args: std::collections::BTreeMap::from([("text".into(), "hello".into())]),
             context: InvocationContext { cwd: ".".into() },
+            detach: false,
         }
     }
 
@@ -521,10 +546,54 @@ mod tests {
     }
 
     #[test]
-    fn malformed_invocation_event_maps_to_parse_error() {
+    fn unknown_event_type_is_skipped_not_fatal() {
         let addr = spawn_stream_server(
             serde_json::json!({"ok": true}),
-            vec![serde_json::json!({"type": "unknown"})],
+            vec![
+                serde_json::json!({"type": "telemetry", "data": {"new": true}}),
+                serde_json::json!({"type": "done", "exit_code": 0}),
+            ],
+        );
+        let client = ZrClient::new(addr);
+        let mut stream = client.invoke_command(invoke_request()).unwrap();
+
+        // The unknown event from a newer daemon is skipped; the next known
+        // event decodes normally (additive-only protocol contract).
+        assert_eq!(
+            stream.next_event().unwrap(),
+            Some(InvocationEvent::Done {
+                exit_code: 0,
+                error: None,
+            })
+        );
+    }
+
+    #[test]
+    fn invalid_json_event_is_parse_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            writeln!(stream, "{}", serde_json::json!({"ok": true})).unwrap();
+            writeln!(stream, "not json at all").unwrap();
+            stream.flush().unwrap();
+        });
+        let client = ZrClient::new(addr);
+        let mut stream = client.invoke_command(invoke_request()).unwrap();
+
+        let error = stream.next_event().unwrap_err();
+
+        assert!(matches!(error, ZrClientError::ParseEvent { .. }));
+    }
+
+    #[test]
+    fn malformed_known_event_is_parse_error() {
+        let addr = spawn_stream_server(
+            serde_json::json!({"ok": true}),
+            vec![serde_json::json!({"type": "done"})],
         );
         let client = ZrClient::new(addr);
         let mut stream = client.invoke_command(invoke_request()).unwrap();
@@ -532,5 +601,47 @@ mod tests {
         let error = stream.next_event().unwrap_err();
 
         assert!(matches!(error, ZrClientError::ParseEvent { .. }));
+    }
+
+    #[test]
+    fn version_mismatch_refusal_maps_to_typed_error() {
+        let addr = spawn_server(serde_json::json!({
+            "ok": false,
+            "refusal": {
+                "kind": "version_mismatch",
+                "daemon": "9.9.9",
+                "client": env!("CARGO_PKG_VERSION"),
+            },
+            "error": "daemon version mismatch"
+        }));
+        let client = ZrClient::new(addr);
+
+        let error = client.list_packages().unwrap_err();
+
+        assert!(matches!(
+            error,
+            ZrClientError::VersionMismatch { daemon, .. } if daemon == "9.9.9"
+        ));
+    }
+
+    #[test]
+    fn requests_carry_client_version() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            writeln!(stream, "{}", serde_json::json!({"ok": true, "result": []})).unwrap();
+            stream.flush().unwrap();
+            line
+        });
+        let client = ZrClient::new(addr);
+        let _ = client.list_packages().unwrap();
+
+        let request_line = handle.join().unwrap();
+        let request: serde_json::Value = serde_json::from_str(request_line.trim()).unwrap();
+        assert_eq!(request["zacor_version"], env!("CARGO_PKG_VERSION"));
     }
 }

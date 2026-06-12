@@ -5,9 +5,10 @@ use std::rc::Rc;
 use mlua::{Function, Lua, RegistryKey, Table, Value};
 
 use crate::function::{
-    FunctionContext, FunctionError, FunctionInvoker, FunctionMetadata, FunctionName,
-    FunctionOutcome, FunctionRegistry, LuaFunctionId,
+    FunctionContext, FunctionEffect, FunctionError, FunctionInvoker, FunctionMetadata,
+    FunctionName, FunctionOutcome, FunctionRegistry, LuaFunctionId,
 };
+use crate::host::BufferId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LuaHostPhase {
@@ -135,14 +136,16 @@ impl LuaHost {
         };
 
         let context_logs = Rc::new(RefCell::new(Vec::new()));
+        let context_effects = Rc::new(RefCell::new(Vec::new()));
         let context =
-            create_function_context(&self.lua, context_logs.clone()).map_err(|error| {
-                LuaHostError::new(
-                    LuaHostPhase::Call,
-                    Some(name.to_string()),
-                    error.to_string(),
-                )
-            })?;
+            create_function_context(&self.lua, context_logs.clone(), context_effects.clone())
+                .map_err(|error| {
+                    LuaHostError::new(
+                        LuaHostPhase::Call,
+                        Some(name.to_string()),
+                        error.to_string(),
+                    )
+                })?;
 
         function.call::<Value>(context).map_err(|error| {
             LuaHostError::new(
@@ -155,6 +158,9 @@ impl LuaHost {
         let mut function_context = FunctionContext::new();
         for log in context_logs.borrow_mut().drain(..) {
             function_context.log(log);
+        }
+        for effect in context_effects.borrow_mut().drain(..) {
+            function_context.push_effect(effect);
         }
         Ok(function_context.finish())
     }
@@ -198,13 +204,29 @@ fn install_zri_api(
     Ok(())
 }
 
-fn create_function_context(lua: &Lua, logs: Rc<RefCell<Vec<String>>>) -> mlua::Result<Table> {
+/// Build the per-call `ctx` table. Lua receives opaque integer handles and
+/// namespaced functions that queue effects — never live references into host
+/// internals (Neovim `nvim_buf_*` precedent; Leo's `exec(script, {c, g})` is
+/// the documented anti-pattern).
+fn create_function_context(
+    lua: &Lua,
+    logs: Rc<RefCell<Vec<String>>>,
+    effects: Rc<RefCell<Vec<FunctionEffect>>>,
+) -> mlua::Result<Table> {
     let context = lua.create_table()?;
     let log = lua.create_function(move |_, message: String| {
         logs.borrow_mut().push(message);
         Ok(())
     })?;
     context.set("log", log)?;
+    let buf_append = lua.create_function(move |_, (buffer, text): (u64, String)| {
+        effects.borrow_mut().push(FunctionEffect::BufferAppend {
+            buffer: BufferId(buffer),
+            text,
+        });
+        Ok(())
+    })?;
+    context.set("buf_append", buf_append)?;
     Ok(context)
 }
 
@@ -248,6 +270,30 @@ mod tests {
         assert!(host.contains_function("demo.hello"));
         assert_eq!(host.functions().len(), 1);
         assert_eq!(host.functions()[0].name.as_str(), "demo.hello");
+    }
+
+    #[test]
+    fn lua_function_queues_buffer_effects_through_handles() {
+        let host = LuaHost::new().unwrap();
+        host.load_chunk(
+            "effects.lua",
+            r#"
+                zri.register_function("demo.append", function(ctx)
+                    ctx.buf_append(7, "from lua\n")
+                end)
+            "#,
+        )
+        .unwrap();
+
+        let outcome = host.call_function("demo.append").unwrap();
+
+        assert_eq!(
+            outcome.effects(),
+            &[FunctionEffect::BufferAppend {
+                buffer: BufferId(7),
+                text: "from lua\n".to_string(),
+            }]
+        );
     }
 
     #[test]
